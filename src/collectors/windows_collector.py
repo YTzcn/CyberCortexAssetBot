@@ -128,6 +128,9 @@ class WindowsCollector(BaseCollector):
             # Collect using PowerShell
             services.extend(self._collect_powershell_services())
             
+            # Collect from Registry
+            services.extend(self._collect_registry_services())
+            
             # Collect running processes
             services.extend(self._collect_running_processes())
             
@@ -159,11 +162,22 @@ class WindowsCollector(BaseCollector):
                 if lib_path.exists():
                     for dll_file in lib_path.rglob("*.dll"):
                         if dll_file.is_file():
+                            # Try to get version information
+                            version = None
+                            try:
+                                import win32api
+                                version_info = win32api.GetFileVersionInfo(str(dll_file), "\\")
+                                version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                            except:
+                                pass
+                            
                             libraries.append(AssetData(
                                 name=dll_file.name,
+                                version=version,
                                 path=str(dll_file),
                                 size=dll_file.stat().st_size,
-                                install_date=datetime.fromtimestamp(dll_file.stat().st_mtime)
+                                install_date=datetime.fromtimestamp(dll_file.stat().st_mtime),
+                                vendor="Microsoft" if "Windows" in str(dll_file) else None
                             ))
             
             # Collect .NET assemblies
@@ -416,8 +430,20 @@ class WindowsCollector(BaseCollector):
         
         try:
             for service in self.wmi_conn.Win32_Service():
+                # Try to get version from executable path
+                version = None
+                if service.PathName:
+                    try:
+                        # Get file version from executable
+                        import win32api
+                        version_info = win32api.GetFileVersionInfo(service.PathName.strip('"'), "\\")
+                        version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                    except:
+                        pass
+                
                 services.append(AssetData(
                     name=service.Name,
+                    version=version,
                     description=service.Description,
                     path=service.PathName,
                     vendor=service.StartMode
@@ -428,11 +454,33 @@ class WindowsCollector(BaseCollector):
         return services
     
     def _collect_powershell_services(self) -> List[AssetData]:
-        """Collect services using PowerShell."""
+        """Collect services using PowerShell with version info."""
         services = []
         
         try:
-            ps_cmd = "Get-Service | Select-Object Name, DisplayName, Status | ConvertTo-Json"
+            # PowerShell command to get services with executable path and version
+            ps_cmd = """
+            Get-WmiObject -Class Win32_Service | ForEach-Object {
+                $version = $null
+                if ($_.PathName) {
+                    try {
+                        $filePath = $_.PathName.Trim('"')
+                        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($filePath)
+                        $version = $versionInfo.FileVersion
+                    } catch {
+                        $version = $null
+                    }
+                }
+                [PSCustomObject]@{
+                    Name = $_.Name
+                    DisplayName = $_.DisplayName
+                    Status = $_.State
+                    PathName = $_.PathName
+                    Version = $version
+                    StartMode = $_.StartMode
+                }
+            } | ConvertTo-Json
+            """
             output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 service_data = json.loads(output)
@@ -440,9 +488,78 @@ class WindowsCollector(BaseCollector):
                     for service in service_data:
                         services.append(AssetData(
                             name=service.get('Name', ''),
+                            version=service.get('Version'),
                             description=service.get('DisplayName', ''),
-                            vendor=service.get('Status', '')
+                            path=service.get('PathName', ''),
+                            vendor=service.get('StartMode', '')
                         ))
+        except Exception:
+            pass
+        
+        return services
+    
+    def _collect_registry_services(self) -> List[AssetData]:
+        """Collect services from Windows Registry."""
+        services = []
+        
+        if not WINREG_AVAILABLE:
+            return services
+        
+        try:
+            # Registry key for services
+            reg_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, 
+                                   "SYSTEM\\CurrentControlSet\\Services")
+            
+            for i in range(winreg.QueryInfoKey(reg_key)[0]):
+                try:
+                    service_name = winreg.EnumKey(reg_key, i)
+                    service_key = winreg.OpenKey(reg_key, service_name)
+                    
+                    # Get service information
+                    display_name = None
+                    image_path = None
+                    start_type = None
+                    
+                    try:
+                        display_name = winreg.QueryValueEx(service_key, "DisplayName")[0]
+                    except FileNotFoundError:
+                        pass
+                    
+                    try:
+                        image_path = winreg.QueryValueEx(service_key, "ImagePath")[0]
+                    except FileNotFoundError:
+                        pass
+                    
+                    try:
+                        start_type = winreg.QueryValueEx(service_key, "Start")[0]
+                    except FileNotFoundError:
+                        pass
+                    
+                    # Try to get version from executable
+                    version = None
+                    if image_path:
+                        try:
+                            import win32api
+                            clean_path = image_path.strip('"')
+                            version_info = win32api.GetFileVersionInfo(clean_path, "\\")
+                            version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                        except:
+                            pass
+                    
+                    services.append(AssetData(
+                        name=service_name,
+                        version=version,
+                        description=display_name,
+                        path=image_path,
+                        vendor=f"StartType: {start_type}" if start_type is not None else None
+                    ))
+                    
+                    winreg.CloseKey(service_key)
+                    
+                except OSError:
+                    continue
+            
+            winreg.CloseKey(reg_key)
         except Exception:
             pass
         
@@ -484,8 +601,18 @@ class WindowsCollector(BaseCollector):
                 if gac_dir.exists():
                     for dll_file in gac_dir.rglob("*.dll"):
                         if dll_file.is_file():
+                            # Try to get version information
+                            version = None
+                            try:
+                                import win32api
+                                version_info = win32api.GetFileVersionInfo(str(dll_file), "\\")
+                                version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                            except:
+                                pass
+                            
                             libraries.append(AssetData(
                                 name=dll_file.name,
+                                version=version,
                                 path=str(dll_file),
                                 size=dll_file.stat().st_size,
                                 vendor=".NET Framework"
