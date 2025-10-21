@@ -194,3 +194,4 @@ def is_supported_platform() -> bool:
     """
     platform_type = get_current_platform().platform_type
     return platform_type != PlatformType.UNKNOWN
+

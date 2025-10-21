@@ -145,3 +145,4 @@ Bu proje MIT lisansı altında lisanslanmıştır.
 3. Commit yapın (`git commit -m 'Add amazing feature'`)
 4. Push yapın (`git push origin feature/amazing-feature`)
 5. Pull Request oluşturun
+

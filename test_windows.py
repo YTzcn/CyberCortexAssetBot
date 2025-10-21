@@ -52,3 +52,4 @@ def test_windows_collector():
 
 if __name__ == "__main__":
     test_windows_collector()
+
