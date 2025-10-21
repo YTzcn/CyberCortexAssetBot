@@ -318,6 +318,8 @@ class BaseCollector(ABC):
                 [command] + list(args),
                 capture_output=True,
                 text=True,
+                encoding='utf-8',
+                errors='replace',  # Replace invalid characters instead of failing
                 check=True,
                 **kwargs
             )

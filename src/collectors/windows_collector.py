@@ -251,7 +251,7 @@ class WindowsCollector(BaseCollector):
         
         try:
             ps_cmd = "Get-WmiObject -Class Win32_SystemDriver | Select-Object Name, Description, PathName, ServiceType | ConvertTo-Json"
-            output = self._safe_execute("powershell", "-Command", ps_cmd)
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 driver_data = json.loads(output)
                 if isinstance(driver_data, list):
@@ -374,7 +374,7 @@ class WindowsCollector(BaseCollector):
             Select-Object DisplayName, DisplayVersion, Publisher | 
             ConvertTo-Json
             """
-            output = self._safe_execute("powershell", "-Command", ps_cmd)
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 app_data = json.loads(output)
                 if isinstance(app_data, list):
@@ -395,7 +395,7 @@ class WindowsCollector(BaseCollector):
         
         try:
             ps_cmd = "Get-AppxPackage | Select-Object Name, Version, Publisher | ConvertTo-Json"
-            output = self._safe_execute("powershell", "-Command", ps_cmd)
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 store_data = json.loads(output)
                 if isinstance(store_data, list):
@@ -433,7 +433,7 @@ class WindowsCollector(BaseCollector):
         
         try:
             ps_cmd = "Get-Service | Select-Object Name, DisplayName, Status | ConvertTo-Json"
-            output = self._safe_execute("powershell", "-Command", ps_cmd)
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 service_data = json.loads(output)
                 if isinstance(service_data, list):
@@ -507,7 +507,8 @@ class WindowsCollector(BaseCollector):
                     packages.append(AssetData(
                         name=pkg['name'],
                         version=pkg['version'],
-                        description=pkg.get('description', '')
+                        description=pkg.get('description') or None,
+                        vendor="Python"
                     ))
         except Exception:
             pass
@@ -526,8 +527,9 @@ class WindowsCollector(BaseCollector):
                     for name, info in npm_data['dependencies'].items():
                         packages.append(AssetData(
                             name=name,
-                            version=info.get('version', ''),
-                            description=info.get('description', '')
+                            version=info.get('version') or None,
+                            description=info.get('description') or None,
+                            vendor="NPM"
                         ))
         except Exception:
             pass
@@ -659,7 +661,7 @@ class WindowsCollector(BaseCollector):
         
         try:
             ps_cmd = "Get-VM | Select-Object Name, State, Generation | ConvertTo-Json"
-            output = self._safe_execute("powershell", "-Command", ps_cmd)
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 vm_data = json.loads(output)
                 if isinstance(vm_data, list):
