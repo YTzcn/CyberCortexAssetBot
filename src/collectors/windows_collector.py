@@ -242,6 +242,28 @@ class WindowsCollector(BaseCollector):
         
         return containers
     
+    def collect_hardware(self) -> List[AssetData]:
+        """
+        Collect hardware information.
+        
+        Returns:
+            List of hardware assets
+        """
+        hardware = []
+        
+        try:
+            # Collect using WMI if available
+            if self.wmi_conn:
+                hardware.extend(self._collect_wmi_hardware())
+            
+            # Collect using PowerShell as fallback
+            hardware.extend(self._collect_powershell_hardware())
+            
+        except Exception as e:
+            raise DataCollectionError(f"Failed to collect hardware: {str(e)}")
+        
+        return hardware
+    
     def _collect_wmi_drivers(self) -> List[AssetData]:
         """Collect drivers using WMI."""
         drivers = []
@@ -848,3 +870,211 @@ class WindowsCollector(BaseCollector):
             pass
         
         return containers
+    
+    def _collect_wmi_hardware(self) -> List[AssetData]:
+        """Collect hardware using WMI."""
+        hardware = []
+        
+        try:
+            # CPU Information
+            for cpu in self.wmi_conn.Win32_Processor():
+                hardware.append(AssetData(
+                    name=f"CPU: {cpu.Name}",
+                    version=cpu.Version,
+                    description=f"Manufacturer: {cpu.Manufacturer}, Cores: {cpu.NumberOfCores}, Threads: {cpu.NumberOfLogicalProcessors}",
+                    vendor=cpu.Manufacturer,
+                    size=cpu.MaxClockSpeed
+                ))
+            
+            # Memory Information
+            for memory in self.wmi_conn.Win32_PhysicalMemory():
+                hardware.append(AssetData(
+                    name=f"RAM: {memory.Capacity // (1024**3)}GB",
+                    version=memory.Version,
+                    description=f"Manufacturer: {memory.Manufacturer}, Speed: {memory.Speed}MHz, Form Factor: {memory.FormFactor}",
+                    vendor=memory.Manufacturer,
+                    size=memory.Capacity
+                ))
+            
+            # Disk Drives
+            for disk in self.wmi_conn.Win32_DiskDrive():
+                hardware.append(AssetData(
+                    name=f"Disk: {disk.Model}",
+                    version=disk.FirmwareRevision,
+                    description=f"Manufacturer: {disk.Manufacturer}, Interface: {disk.InterfaceType}, Size: {disk.Size // (1024**3)}GB",
+                    vendor=disk.Manufacturer,
+                    size=disk.Size
+                ))
+            
+            # Network Adapters
+            for adapter in self.wmi_conn.Win32_NetworkAdapter():
+                if adapter.NetConnectionStatus == 2:  # Connected
+                    hardware.append(AssetData(
+                        name=f"Network: {adapter.Name}",
+                        version=adapter.DriverVersion,
+                        description=f"Manufacturer: {adapter.Manufacturer}, MAC: {adapter.MACAddress}",
+                        vendor=adapter.Manufacturer
+                    ))
+            
+            # Graphics Cards
+            for gpu in self.wmi_conn.Win32_VideoController():
+                if gpu.Name and "Microsoft" not in gpu.Name:
+                    hardware.append(AssetData(
+                        name=f"GPU: {gpu.Name}",
+                        version=gpu.DriverVersion,
+                        description=f"Manufacturer: {gpu.Manufacturer}, Memory: {gpu.AdapterRAM // (1024**2)}MB",
+                        vendor=gpu.Manufacturer,
+                        size=gpu.AdapterRAM
+                    ))
+            
+            # Motherboard
+            for board in self.wmi_conn.Win32_BaseBoard():
+                hardware.append(AssetData(
+                    name=f"Motherboard: {board.Product}",
+                    version=board.Version,
+                    description=f"Manufacturer: {board.Manufacturer}, Serial: {board.SerialNumber}",
+                    vendor=board.Manufacturer
+                ))
+            
+            # BIOS
+            for bios in self.wmi_conn.Win32_BIOS():
+                hardware.append(AssetData(
+                    name=f"BIOS: {bios.Name}",
+                    version=bios.SMBIOSBIOSVersion,
+                    description=f"Manufacturer: {bios.Manufacturer}, Release Date: {bios.ReleaseDate}",
+                    vendor=bios.Manufacturer
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_powershell_hardware(self) -> List[AssetData]:
+        """Collect hardware using PowerShell."""
+        hardware = []
+        
+        try:
+            ps_cmd = """
+            $hardware = @()
+            
+            # CPU
+            Get-WmiObject -Class Win32_Processor | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "CPU"
+                    Name = $_.Name
+                    Version = $_.Version
+                    Manufacturer = $_.Manufacturer
+                    Cores = $_.NumberOfCores
+                    Threads = $_.NumberOfLogicalProcessors
+                    MaxClockSpeed = $_.MaxClockSpeed
+                }
+            }
+            
+            # Memory
+            Get-WmiObject -Class Win32_PhysicalMemory | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "RAM"
+                    Name = "RAM: $([math]::Round($_.Capacity / 1GB, 2))GB"
+                    Version = $_.Version
+                    Manufacturer = $_.Manufacturer
+                    Speed = $_.Speed
+                    FormFactor = $_.FormFactor
+                    Capacity = $_.Capacity
+                }
+            }
+            
+            # Disk Drives
+            Get-WmiObject -Class Win32_DiskDrive | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "Disk"
+                    Name = "Disk: $($_.Model)"
+                    Version = $_.FirmwareRevision
+                    Manufacturer = $_.Manufacturer
+                    Interface = $_.InterfaceType
+                    Size = $_.Size
+                }
+            }
+            
+            # Network Adapters
+            Get-WmiObject -Class Win32_NetworkAdapter | Where-Object { $_.NetConnectionStatus -eq 2 } | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "Network"
+                    Name = "Network: $($_.Name)"
+                    Version = $_.DriverVersion
+                    Manufacturer = $_.Manufacturer
+                    MACAddress = $_.MACAddress
+                }
+            }
+            
+            # Graphics Cards
+            Get-WmiObject -Class Win32_VideoController | Where-Object { $_.Name -and $_.Name -notlike "*Microsoft*" } | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "GPU"
+                    Name = "GPU: $($_.Name)"
+                    Version = $_.DriverVersion
+                    Manufacturer = $_.Manufacturer
+                    AdapterRAM = $_.AdapterRAM
+                }
+            }
+            
+            # Motherboard
+            Get-WmiObject -Class Win32_BaseBoard | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "Motherboard"
+                    Name = "Motherboard: $($_.Product)"
+                    Version = $_.Version
+                    Manufacturer = $_.Manufacturer
+                    SerialNumber = $_.SerialNumber
+                }
+            }
+            
+            # BIOS
+            Get-WmiObject -Class Win32_BIOS | ForEach-Object {
+                $hardware += [PSCustomObject]@{
+                    Type = "BIOS"
+                    Name = "BIOS: $($_.Name)"
+                    Version = $_.SMBIOSBIOSVersion
+                    Manufacturer = $_.Manufacturer
+                    ReleaseDate = $_.ReleaseDate
+                }
+            }
+            
+            $hardware | ConvertTo-Json
+            """
+            
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
+            if output:
+                hardware_data = json.loads(output)
+                if isinstance(hardware_data, list):
+                    for item in hardware_data:
+                        description_parts = []
+                        if item.get('Manufacturer'):
+                            description_parts.append(f"Manufacturer: {item['Manufacturer']}")
+                        if item.get('Cores'):
+                            description_parts.append(f"Cores: {item['Cores']}")
+                        if item.get('Threads'):
+                            description_parts.append(f"Threads: {item['Threads']}")
+                        if item.get('Speed'):
+                            description_parts.append(f"Speed: {item['Speed']}MHz")
+                        if item.get('Interface'):
+                            description_parts.append(f"Interface: {item['Interface']}")
+                        if item.get('MACAddress'):
+                            description_parts.append(f"MAC: {item['MACAddress']}")
+                        if item.get('SerialNumber'):
+                            description_parts.append(f"Serial: {item['SerialNumber']}")
+                        if item.get('ReleaseDate'):
+                            description_parts.append(f"Release: {item['ReleaseDate']}")
+                        
+                        hardware.append(AssetData(
+                            name=item.get('Name', ''),
+                            version=item.get('Version'),
+                            description=', '.join(description_parts) if description_parts else None,
+                            vendor=item.get('Manufacturer'),
+                            size=item.get('Capacity') or item.get('AdapterRAM') or item.get('Size') or item.get('MaxClockSpeed')
+                        ))
+                        
+        except Exception:
+            pass
+        
+        return hardware

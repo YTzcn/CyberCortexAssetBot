@@ -25,6 +25,7 @@ class AssetType(Enum):
     LIBRARIES = "libraries"
     PACKAGES = "packages"
     CONTAINERS = "containers"
+    HARDWARE = "hardware"
 
 
 class CollectionError(Exception):
@@ -182,6 +183,15 @@ class BaseCollector(ABC):
         """
         pass
     
+    def collect_hardware(self) -> List[AssetData]:
+        """
+        Collect hardware information.
+        
+        Returns:
+            List of hardware assets
+        """
+        pass
+    
     def collect_all(self) -> CollectionResult:
         """
         Collect all asset types.
@@ -201,6 +211,7 @@ class BaseCollector(ABC):
             AssetType.LIBRARIES: self.collect_libraries,
             AssetType.PACKAGES: self.collect_packages,
             AssetType.CONTAINERS: self.collect_containers,
+            AssetType.HARDWARE: self.collect_hardware,
         }
         
         # Collect each asset type with error handling
@@ -246,6 +257,7 @@ class BaseCollector(ABC):
             AssetType.LIBRARIES: self.collect_libraries,
             AssetType.PACKAGES: self.collect_packages,
             AssetType.CONTAINERS: self.collect_containers,
+            AssetType.HARDWARE: self.collect_hardware,
         }
         
         # Collect only specified asset types

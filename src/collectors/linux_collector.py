@@ -632,3 +632,322 @@ class LinuxCollector(BaseCollector):
             pass
         
         return containers
+    
+    def collect_hardware(self) -> List[AssetData]:
+        """
+        Collect hardware information.
+        
+        Returns:
+            List of hardware assets
+        """
+        hardware = []
+        
+        try:
+            # System Information
+            hardware.extend(self._collect_system_info())
+            
+            # CPU Information
+            hardware.extend(self._collect_cpu_info())
+            
+            # Memory Information
+            hardware.extend(self._collect_memory_info())
+            
+            # Disk Information
+            hardware.extend(self._collect_disk_info())
+            
+            # Network Information
+            hardware.extend(self._collect_network_info())
+            
+            # Graphics Information
+            hardware.extend(self._collect_graphics_info())
+            
+            # USB Devices
+            hardware.extend(self._collect_usb_devices())
+            
+        except Exception as e:
+            raise DataCollectionError(f"Failed to collect hardware: {str(e)}")
+        
+        return hardware
+    
+    def _collect_system_info(self) -> List[AssetData]:
+        """Collect system information."""
+        hardware = []
+        
+        try:
+            # System information from /proc/cpuinfo
+            cpuinfo = self._safe_execute("cat", "/proc/cpuinfo")
+            if cpuinfo:
+                lines = cpuinfo.split('\n')
+                vendor_id = None
+                model_name = None
+                for line in lines:
+                    if line.startswith('vendor_id'):
+                        vendor_id = line.split(':')[1].strip()
+                    elif line.startswith('model name'):
+                        model_name = line.split(':')[1].strip()
+                        break
+                
+                if model_name:
+                    hardware.append(AssetData(
+                        name=f"System: {model_name}",
+                        vendor=vendor_id or "Unknown"
+                    ))
+            
+            # System information from /proc/version
+            version = self._safe_execute("cat", "/proc/version")
+            if version:
+                hardware.append(AssetData(
+                    name="Kernel",
+                    version=version.split()[2],  # Kernel version
+                    description=version,
+                    vendor="Linux"
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_cpu_info(self) -> List[AssetData]:
+        """Collect CPU information."""
+        hardware = []
+        
+        try:
+            # CPU information from lscpu
+            lscpu_output = self._safe_execute("lscpu")
+            if lscpu_output:
+                cpu_info = {}
+                for line in lscpu_output.split('\n'):
+                    if ':' in line:
+                        key, value = line.split(':', 1)
+                        cpu_info[key.strip()] = value.strip()
+                
+                if 'Model name' in cpu_info:
+                    hardware.append(AssetData(
+                        name=f"CPU: {cpu_info['Model name']}",
+                        version=cpu_info.get('CPU(s)', 'Unknown'),
+                        description=f"Cores: {cpu_info.get('CPU(s)', 'Unknown')}, Threads: {cpu_info.get('Thread(s) per core', 'Unknown')}, Architecture: {cpu_info.get('Architecture', 'Unknown')}",
+                        vendor=cpu_info.get('Vendor ID', 'Unknown')
+                    ))
+            
+            # Alternative: /proc/cpuinfo
+            cpuinfo = self._safe_execute("cat", "/proc/cpuinfo")
+            if cpuinfo and not hardware:  # Only if lscpu didn't work
+                lines = cpuinfo.split('\n')
+                model_name = None
+                vendor_id = None
+                cpu_cores = 0
+                
+                for line in lines:
+                    if line.startswith('model name'):
+                        model_name = line.split(':')[1].strip()
+                    elif line.startswith('vendor_id'):
+                        vendor_id = line.split(':')[1].strip()
+                    elif line.startswith('processor'):
+                        cpu_cores += 1
+                
+                if model_name:
+                    hardware.append(AssetData(
+                        name=f"CPU: {model_name}",
+                        description=f"Cores: {cpu_cores}",
+                        vendor=vendor_id or "Unknown"
+                    ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_memory_info(self) -> List[AssetData]:
+        """Collect memory information."""
+        hardware = []
+        
+        try:
+            # Memory information from /proc/meminfo
+            meminfo = self._safe_execute("cat", "/proc/meminfo")
+            if meminfo:
+                mem_total = None
+                for line in meminfo.split('\n'):
+                    if line.startswith('MemTotal'):
+                        mem_total = int(line.split(':')[1].strip().split()[0]) // 1024  # Convert to MB
+                        break
+                
+                if mem_total:
+                    hardware.append(AssetData(
+                        name=f"RAM: {mem_total // 1024}GB",
+                        size=mem_total * 1024 * 1024,  # Convert to bytes
+                        vendor="Unknown"
+                    ))
+            
+            # Alternative: free command
+            free_output = self._safe_execute("free", "-h")
+            if free_output and not hardware:
+                lines = free_output.split('\n')
+                if len(lines) > 1:
+                    mem_line = lines[1].split()
+                    if len(mem_line) > 1:
+                        hardware.append(AssetData(
+                            name=f"RAM: {mem_line[1]}",
+                            vendor="Unknown"
+                        ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_disk_info(self) -> List[AssetData]:
+        """Collect disk information."""
+        hardware = []
+        
+        try:
+            # Disk information from lsblk
+            lsblk_output = self._safe_execute("lsblk", "-J")
+            if lsblk_output:
+                import json
+                data = json.loads(lsblk_output)
+                if 'blockdevices' in data:
+                    for device in data['blockdevices']:
+                        if device.get('type') == 'disk':
+                            hardware.append(AssetData(
+                                name=f"Disk: {device.get('name', 'Unknown')}",
+                                description=f"Size: {device.get('size', 'Unknown')}, Model: {device.get('model', 'Unknown')}",
+                                vendor=device.get('vendor', 'Unknown'),
+                                size=self._parse_size(device.get('size', '0'))
+                            ))
+            
+            # Alternative: df command
+            df_output = self._safe_execute("df", "-h")
+            if df_output and not hardware:
+                lines = df_output.split('\n')[1:]  # Skip header
+                for line in lines:
+                    if line.strip():
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            hardware.append(AssetData(
+                                name=f"Disk: {parts[0]}",
+                                description=f"Size: {parts[1]}, Used: {parts[2]}, Available: {parts[3]}",
+                                vendor="Unknown"
+                            ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_network_info(self) -> List[AssetData]:
+        """Collect network information."""
+        hardware = []
+        
+        try:
+            # Network interfaces from ip command
+            ip_output = self._safe_execute("ip", "link", "show")
+            if ip_output:
+                for line in ip_output.split('\n'):
+                    if ':' in line and 'state' in line:
+                        interface = line.split(':')[1].strip()
+                        if not interface.startswith('lo'):  # Skip loopback
+                            hardware.append(AssetData(
+                                name=f"Network: {interface}",
+                                vendor="Unknown"
+                            ))
+            
+            # Alternative: ifconfig
+            ifconfig_output = self._safe_execute("ifconfig")
+            if ifconfig_output and not hardware:
+                for line in ifconfig_output.split('\n'):
+                    if line and not line.startswith(' ') and not line.startswith('\t'):
+                        interface = line.split(':')[0]
+                        if not interface.startswith('lo'):  # Skip loopback
+                            hardware.append(AssetData(
+                                name=f"Network: {interface}",
+                                vendor="Unknown"
+                            ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_graphics_info(self) -> List[AssetData]:
+        """Collect graphics information."""
+        hardware = []
+        
+        try:
+            # Graphics information from lspci
+            lspci_output = self._safe_execute("lspci")
+            if lspci_output:
+                for line in lspci_output.split('\n'):
+                    if 'VGA' in line or 'Display' in line or '3D' in line:
+                        hardware.append(AssetData(
+                            name=f"GPU: {line}",
+                            vendor="Unknown"
+                        ))
+            
+            # Alternative: /proc/bus/pci/devices
+            pci_output = self._safe_execute("cat", "/proc/bus/pci/devices")
+            if pci_output and not hardware:
+                # This is more complex, just add a basic entry
+                hardware.append(AssetData(
+                    name="GPU: Unknown",
+                    vendor="Unknown"
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_usb_devices(self) -> List[AssetData]:
+        """Collect USB device information."""
+        hardware = []
+        
+        try:
+            # USB devices from lsusb
+            lsusb_output = self._safe_execute("lsusb")
+            if lsusb_output:
+                for line in lsusb_output.split('\n'):
+                    if line.strip():
+                        hardware.append(AssetData(
+                            name=f"USB: {line}",
+                            vendor="Unknown"
+                        ))
+            
+            # Alternative: /proc/bus/usb/devices
+            usb_output = self._safe_execute("cat", "/proc/bus/usb/devices")
+            if usb_output and not hardware:
+                # This is more complex, just add a basic entry
+                hardware.append(AssetData(
+                    name="USB: Unknown",
+                    vendor="Unknown"
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _parse_size(self, size_str: str) -> int:
+        """Parse size string to bytes."""
+        if not size_str or size_str == 'Unknown':
+            return 0
+        
+        size_str = size_str.upper()
+        multipliers = {
+            'K': 1024,
+            'M': 1024**2,
+            'G': 1024**3,
+            'T': 1024**4
+        }
+        
+        for suffix, multiplier in multipliers.items():
+            if size_str.endswith(suffix):
+                try:
+                    return int(float(size_str[:-1]) * multiplier)
+                except ValueError:
+                    return 0
+        
+        try:
+            return int(size_str)
+        except ValueError:
+            return 0

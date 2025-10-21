@@ -847,3 +847,181 @@ class MacOSCollector(BaseCollector):
             pass
         
         return containers
+    
+    def collect_hardware(self) -> List[AssetData]:
+        """
+        Collect hardware information.
+        
+        Returns:
+            List of hardware assets
+        """
+        hardware = []
+        
+        try:
+            # System Information
+            hardware.extend(self._collect_system_info())
+            
+            # CPU Information
+            hardware.extend(self._collect_cpu_info())
+            
+            # Memory Information
+            hardware.extend(self._collect_memory_info())
+            
+            # Disk Information
+            hardware.extend(self._collect_disk_info())
+            
+            # Network Information
+            hardware.extend(self._collect_network_info())
+            
+            # Graphics Information
+            hardware.extend(self._collect_graphics_info())
+            
+        except Exception as e:
+            raise DataCollectionError(f"Failed to collect hardware: {str(e)}")
+        
+        return hardware
+    
+    def _collect_system_info(self) -> List[AssetData]:
+        """Collect system information."""
+        hardware = []
+        
+        try:
+            # System model and serial
+            model = self._safe_execute("sysctl", "-n", "hw.model")
+            serial = self._safe_execute("system_profiler", "SPHardwareDataType", "-json")
+            
+            if model:
+                hardware.append(AssetData(
+                    name=f"Mac Model: {model}",
+                    vendor="Apple"
+                ))
+            
+            if serial:
+                try:
+                    import json
+                    data = json.loads(serial)
+                    if 'SPHardwareDataType' in data and len(data['SPHardwareDataType']) > 0:
+                        info = data['SPHardwareDataType'][0]
+                        hardware.append(AssetData(
+                            name=f"Serial: {info.get('serial_number', 'Unknown')}",
+                            version=info.get('os_version', 'Unknown'),
+                            description=f"Model: {info.get('machine_model', 'Unknown')}, Boot ROM: {info.get('boot_rom_version', 'Unknown')}",
+                            vendor="Apple"
+                        ))
+                except:
+                    pass
+                    
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_cpu_info(self) -> List[AssetData]:
+        """Collect CPU information."""
+        hardware = []
+        
+        try:
+            # CPU brand string
+            brand = self._safe_execute("sysctl", "-n", "machdep.cpu.brand_string")
+            cores = self._safe_execute("sysctl", "-n", "hw.ncpu")
+            cores_per_package = self._safe_execute("sysctl", "-n", "hw.packages")
+            
+            if brand:
+                hardware.append(AssetData(
+                    name=f"CPU: {brand}",
+                    description=f"Cores: {cores}, Packages: {cores_per_package}",
+                    vendor="Intel" if "Intel" in brand else "Apple" if "Apple" in brand else "Unknown"
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_memory_info(self) -> List[AssetData]:
+        """Collect memory information."""
+        hardware = []
+        
+        try:
+            # Total memory
+            total_memory = self._safe_execute("sysctl", "-n", "hw.memsize")
+            if total_memory:
+                memory_gb = int(total_memory) // (1024**3)
+                hardware.append(AssetData(
+                    name=f"RAM: {memory_gb}GB",
+                    size=int(total_memory),
+                    vendor="Apple"
+                ))
+                
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_disk_info(self) -> List[AssetData]:
+        """Collect disk information."""
+        hardware = []
+        
+        try:
+            # Disk information
+            disk_info = self._safe_execute("system_profiler", "SPStorageDataType", "-json")
+            if disk_info:
+                import json
+                data = json.loads(disk_info)
+                if 'SPStorageDataType' in data:
+                    for disk in data['SPStorageDataType']:
+                        if 'mount_point' in disk:
+                            hardware.append(AssetData(
+                                name=f"Disk: {disk.get('_name', 'Unknown')}",
+                                description=f"Mount: {disk.get('mount_point', 'Unknown')}, Size: {disk.get('size_in_bytes', 0) // (1024**3)}GB",
+                                vendor=disk.get('spserial_ata', {}).get('_name', 'Unknown'),
+                                size=disk.get('size_in_bytes', 0)
+                            ))
+                            
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_network_info(self) -> List[AssetData]:
+        """Collect network information."""
+        hardware = []
+        
+        try:
+            # Network interfaces
+            interfaces = self._safe_execute("ifconfig", "-l")
+            if interfaces:
+                for interface in interfaces.split():
+                    if interface != "lo0":  # Skip loopback
+                        hardware.append(AssetData(
+                            name=f"Network: {interface}",
+                            vendor="Apple"
+                        ))
+                        
+        except Exception:
+            pass
+        
+        return hardware
+    
+    def _collect_graphics_info(self) -> List[AssetData]:
+        """Collect graphics information."""
+        hardware = []
+        
+        try:
+            # Graphics information
+            gpu_info = self._safe_execute("system_profiler", "SPDisplaysDataType", "-json")
+            if gpu_info:
+                import json
+                data = json.loads(gpu_info)
+                if 'SPDisplaysDataType' in data:
+                    for display in data['SPDisplaysDataType']:
+                        hardware.append(AssetData(
+                            name=f"GPU: {display.get('_name', 'Unknown')}",
+                            description=f"Resolution: {display.get('spdisplays_resolution', 'Unknown')}, VRAM: {display.get('spdisplays_vram', 'Unknown')}",
+                            vendor=display.get('sppci_model', 'Unknown')
+                        ))
+                        
+        except Exception:
+            pass
+        
+        return hardware
