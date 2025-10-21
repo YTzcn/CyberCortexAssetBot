@@ -248,8 +248,19 @@ class WindowsCollector(BaseCollector):
         
         try:
             for driver in self.wmi_conn.Win32_SystemDriver():
+                # Try to get version information
+                version = None
+                if driver.PathName:
+                    try:
+                        import win32api
+                        version_info = win32api.GetFileVersionInfo(driver.PathName.strip('"'), "\\")
+                        version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                    except:
+                        pass
+                
                 drivers.append(AssetData(
                     name=driver.Name,
+                    version=version,
                     description=driver.Description,
                     path=driver.PathName,
                     vendor=driver.ServiceType
@@ -264,7 +275,27 @@ class WindowsCollector(BaseCollector):
         drivers = []
         
         try:
-            ps_cmd = "Get-WmiObject -Class Win32_SystemDriver | Select-Object Name, Description, PathName, ServiceType | ConvertTo-Json"
+            ps_cmd = """
+            Get-WmiObject -Class Win32_SystemDriver | ForEach-Object {
+                $version = $null
+                if ($_.PathName) {
+                    try {
+                        $filePath = $_.PathName.Trim('"')
+                        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($filePath)
+                        $version = $versionInfo.FileVersion
+                    } catch {
+                        $version = $null
+                    }
+                }
+                [PSCustomObject]@{
+                    Name = $_.Name
+                    Description = $_.Description
+                    PathName = $_.PathName
+                    ServiceType = $_.ServiceType
+                    Version = $version
+                }
+            } | ConvertTo-Json
+            """
             output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
             if output:
                 driver_data = json.loads(output)
@@ -272,6 +303,7 @@ class WindowsCollector(BaseCollector):
                     for driver in driver_data:
                         drivers.append(AssetData(
                             name=driver.get('Name', ''),
+                            version=driver.get('Version'),
                             description=driver.get('Description', ''),
                             path=driver.get('PathName', ''),
                             vendor=driver.get('ServiceType', '')
@@ -302,9 +334,23 @@ class WindowsCollector(BaseCollector):
                         service_type = winreg.QueryValueEx(subkey, "Type")[0]
                         if service_type == 1:  # Kernel driver
                             image_path = winreg.QueryValueEx(subkey, "ImagePath")[0]
+                            
+                            # Try to get version information
+                            version = None
+                            if image_path:
+                                try:
+                                    import win32api
+                                    clean_path = image_path.strip('"')
+                                    version_info = win32api.GetFileVersionInfo(clean_path, "\\")
+                                    version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                                except:
+                                    pass
+                            
                             drivers.append(AssetData(
                                 name=subkey_name,
-                                path=image_path
+                                version=version,
+                                path=image_path,
+                                vendor="Kernel Driver"
                             ))
                     except FileNotFoundError:
                         pass
