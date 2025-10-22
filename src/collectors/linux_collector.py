@@ -255,17 +255,25 @@ class LinuxCollector(BaseCollector):
         packages = []
         
         try:
-            dpkg_output = self._safe_execute("dpkg", "-l")
-            if dpkg_output:
-                for line in dpkg_output.split('\n')[5:]:  # Skip headers
-                    if line.startswith('ii'):  # Installed packages
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            packages.append(AssetData(
-                                name=parts[1],
-                                version=parts[2],
-                                description=' '.join(parts[4:]) if len(parts) > 4 else None
-                            ))
+            # Use dpkg-query with explicit format to ensure name/version is always parsed
+            query_output = self._safe_execute(
+                "dpkg-query", "-W", "-f=${Package}\t${Version}\t${Architecture}\n"
+            )
+            if query_output:
+                for line in query_output.split('\n'):
+                    if not line.strip():
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        pkg_name = parts[0].strip()
+                        pkg_version = parts[1].strip() or None
+                        pkg_arch = parts[2].strip() if len(parts) > 2 else None
+                        packages.append(AssetData(
+                            name=pkg_name,
+                            version=pkg_version,
+                            vendor="APT",
+                            architecture=pkg_arch
+                        ))
         except Exception:
             pass
         
@@ -359,16 +367,21 @@ class LinuxCollector(BaseCollector):
         packages = []
         
         try:
-            snap_output = self._safe_execute("snap", "list")
+            # Include all revisions to maximize coverage; columns: Name Version Rev Tracking Publisher Notes
+            snap_output = self._safe_execute("snap", "list", "--all", "--color=never")
             if snap_output:
                 for line in snap_output.split('\n')[1:]:  # Skip header
-                    if line.strip():
-                        parts = line.split()
-                        if len(parts) >= 2:
-                            packages.append(AssetData(
-                                name=parts[0],
-                                version=parts[1]
-                            ))
+                    if not line.strip():
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        name = parts[0]
+                        version = parts[1] if parts[1] != "-" else None
+                        packages.append(AssetData(
+                            name=name,
+                            version=version,
+                            vendor="Snap"
+                        ))
         except Exception:
             pass
         
@@ -385,8 +398,41 @@ class LinuxCollector(BaseCollector):
             if bin_path.exists():
                 for binary in bin_path.iterdir():
                     if binary.is_file() and binary.stat().st_mode & 0o111:  # Executable
+                        version: Optional[str] = None
+                        vendor: Optional[str] = "Binary"
+
+                        # Try to map binary to a package and get version
+                        try:
+                            owner = self._safe_execute("dpkg", "-S", str(binary))
+                            if owner:
+                                pkg_name = owner.split(":")[0].strip()
+                                if pkg_name:
+                                    pkg_ver_out = self._safe_execute(
+                                        "dpkg-query", "-W", f"-f=${{Version}}\n", pkg_name
+                                    )
+                                    version = pkg_ver_out.strip() if pkg_ver_out else None
+                                    vendor = "APT"
+                        except Exception:
+                            pass
+
+                        # As a last resort, try binary --version
+                        if not version:
+                            try:
+                                ver_out = (
+                                    self._safe_execute(str(binary), "--version")
+                                    or self._safe_execute(str(binary), "-v")
+                                    or self._safe_execute(str(binary), "-V")
+                                )
+                                if ver_out:
+                                    first_line = ver_out.split("\n", 1)[0].strip()
+                                    version = first_line if first_line else None
+                            except Exception:
+                                pass
+
                         applications.append(AssetData(
                             name=binary.name,
+                            version=version,
+                            vendor=vendor,
                             path=str(binary),
                             size=binary.stat().st_size,
                             install_date=datetime.fromtimestamp(binary.stat().st_mtime)
