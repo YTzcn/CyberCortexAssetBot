@@ -14,7 +14,7 @@ from typing import Optional
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from utils.platform_detector import get_current_platform, is_supported_platform
+from utils.platform_detector import get_current_platform, is_supported_platform, platform_detector
 from collectors.linux_collector import LinuxCollector
 from collectors.windows_collector import WindowsCollector
 from collectors.macos_collector import MacOSCollector
@@ -60,7 +60,7 @@ def collect_assets(asset_types: Optional[list[str]] = None) -> dict:
         return {}
     
     platform_info = get_current_platform()
-    print(f"🖥️  Platform: {platform_info.get_platform_string()}")
+    print(f"🖥️  Platform: {platform_detector.get_platform_string()}")
     print(f"🐍 Python: {platform_info.python_version}")
     print()
     
