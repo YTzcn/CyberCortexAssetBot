@@ -270,13 +270,48 @@ class WindowsCollector(BaseCollector):
         
         try:
             for driver in self.wmi_conn.Win32_SystemDriver():
-                # Try to get version information
+                # Initialize variables
                 version = None
+                checksum = None
+                signature = None
+                install_date = None
+                size = None
+                architecture = None
+                
                 if driver.PathName:
                     try:
                         import win32api
-                        version_info = win32api.GetFileVersionInfo(driver.PathName.strip('"'), "\\")
-                        version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                        clean_path = driver.PathName.strip('"')
+                        clean_path = os.path.expandvars(clean_path)
+                        
+                        # Get version information
+                        try:
+                            version_info = win32api.GetFileVersionInfo(clean_path, "\\")
+                            version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                        except:
+                            pass
+                        
+                        # Get file stats if file exists
+                        file_path = Path(clean_path)
+                        if file_path.exists() and file_path.is_file():
+                            # Get file size
+                            size = file_path.stat().st_size
+                            
+                            # Get install/creation date
+                            install_date = datetime.fromtimestamp(file_path.stat().st_ctime)
+                            
+                            # Calculate checksum
+                            checksum = self._calculate_checksum(str(file_path))
+                            
+                            # Detect architecture from path
+                            path_lower = str(file_path).lower()
+                            if 'system32' in path_lower and 'syswow64' not in path_lower:
+                                architecture = "x64"
+                            elif 'syswow64' in path_lower:
+                                architecture = "x86"
+                            
+                            # Check digital signature
+                            signature = self._check_digital_signature(str(file_path))
                     except:
                         pass
                 
@@ -285,7 +320,12 @@ class WindowsCollector(BaseCollector):
                     version=version,
                     description=driver.Description,
                     path=driver.PathName,
-                    vendor=driver.ServiceType
+                    checksum=checksum,
+                    signature=signature,
+                    install_date=install_date,
+                    size=size,
+                    vendor=driver.ServiceType,
+                    architecture=architecture
                 ))
         except Exception:
             pass
@@ -300,13 +340,44 @@ class WindowsCollector(BaseCollector):
             ps_cmd = """
             Get-WmiObject -Class Win32_SystemDriver | ForEach-Object {
                 $version = $null
+                $size = $null
+                $installDate = $null
+                $checksum = $null
+                $signature = $null
+                $architecture = $null
+                
                 if ($_.PathName) {
                     try {
                         $filePath = $_.PathName.Trim('"')
-                        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($filePath)
-                        $version = $versionInfo.FileVersion
+                        $filePath = [System.Environment]::ExpandEnvironmentVariables($filePath)
+                        
+                        if (Test-Path $filePath) {
+                            # Get version
+                            $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($filePath)
+                            $version = $versionInfo.FileVersion
+                            
+                            # Get file info
+                            $fileInfo = Get-Item $filePath
+                            $size = $fileInfo.Length
+                            $installDate = $fileInfo.CreationTime.ToString("o")
+                            
+                            # Get checksum (SHA256)
+                            $hash = Get-FileHash -Path $filePath -Algorithm SHA256
+                            $checksum = $hash.Hash
+                            
+                            # Get signature
+                            $sig = Get-AuthenticodeSignature -FilePath $filePath
+                            $signature = $sig.Status
+                            
+                            # Detect architecture
+                            if ($filePath -like "*System32*" -and $filePath -notlike "*SysWOW64*") {
+                                $architecture = "x64"
+                            } elseif ($filePath -like "*SysWOW64*") {
+                                $architecture = "x86"
+                            }
+                        }
                     } catch {
-                        $version = $null
+                        # Ignore errors
                     }
                 }
                 [PSCustomObject]@{
@@ -315,6 +386,11 @@ class WindowsCollector(BaseCollector):
                     PathName = $_.PathName
                     ServiceType = $_.ServiceType
                     Version = $version
+                    Size = $size
+                    InstallDate = $installDate
+                    Checksum = $checksum
+                    Signature = $signature
+                    Architecture = $architecture
                 }
             } | ConvertTo-Json
             """
@@ -323,12 +399,25 @@ class WindowsCollector(BaseCollector):
                 driver_data = json.loads(output)
                 if isinstance(driver_data, list):
                     for driver in driver_data:
+                        # Parse install date
+                        install_date = None
+                        if driver.get('InstallDate'):
+                            try:
+                                install_date = datetime.fromisoformat(driver['InstallDate'])
+                            except:
+                                pass
+                        
                         drivers.append(AssetData(
                             name=driver.get('Name', ''),
                             version=driver.get('Version'),
                             description=driver.get('Description', ''),
                             path=driver.get('PathName', ''),
-                            vendor=driver.get('ServiceType', '')
+                            checksum=driver.get('Checksum'),
+                            signature=driver.get('Signature'),
+                            install_date=install_date,
+                            size=driver.get('Size'),
+                            vendor=driver.get('ServiceType', ''),
+                            architecture=driver.get('Architecture')
                         ))
         except Exception:
             pass
@@ -357,14 +446,51 @@ class WindowsCollector(BaseCollector):
                         if service_type == 1:  # Kernel driver
                             image_path = winreg.QueryValueEx(subkey, "ImagePath")[0]
                             
-                            # Try to get version information
+                            # Initialize variables
                             version = None
+                            checksum = None
+                            signature = None
+                            install_date = None
+                            size = None
+                            architecture = None
+                            
                             if image_path:
                                 try:
                                     import win32api
                                     clean_path = image_path.strip('"')
-                                    version_info = win32api.GetFileVersionInfo(clean_path, "\\")
-                                    version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                                    
+                                    # Expand environment variables
+                                    clean_path = os.path.expandvars(clean_path)
+                                    
+                                    # Get version information
+                                    try:
+                                        version_info = win32api.GetFileVersionInfo(clean_path, "\\")
+                                        version = f"{version_info['FileVersionMS'] >> 16}.{version_info['FileVersionMS'] & 0xFFFF}.{version_info['FileVersionLS'] >> 16}.{version_info['FileVersionLS'] & 0xFFFF}"
+                                    except:
+                                        pass
+                                    
+                                    # Get file stats if file exists
+                                    file_path = Path(clean_path)
+                                    if file_path.exists() and file_path.is_file():
+                                        # Get file size
+                                        size = file_path.stat().st_size
+                                        
+                                        # Get install/creation date
+                                        install_date = datetime.fromtimestamp(file_path.stat().st_ctime)
+                                        
+                                        # Calculate checksum
+                                        checksum = self._calculate_checksum(str(file_path))
+                                        
+                                        # Detect architecture from path
+                                        path_lower = str(file_path).lower()
+                                        if 'system32' in path_lower and 'syswow64' not in path_lower:
+                                            architecture = "x64"
+                                        elif 'syswow64' in path_lower:
+                                            architecture = "x86"
+                                        
+                                        # Check digital signature
+                                        signature = self._check_digital_signature(str(file_path))
+                                        
                                 except:
                                     pass
                             
@@ -372,7 +498,12 @@ class WindowsCollector(BaseCollector):
                                 name=subkey_name,
                                 version=version,
                                 path=image_path,
-                                vendor="Kernel Driver"
+                                checksum=checksum,
+                                signature=signature,
+                                install_date=install_date,
+                                size=size,
+                                vendor="Kernel Driver",
+                                architecture=architecture
                             ))
                     except FileNotFoundError:
                         pass
@@ -870,6 +1001,25 @@ class WindowsCollector(BaseCollector):
             pass
         
         return containers
+    
+    def _check_digital_signature(self, file_path: str) -> Optional[str]:
+        """
+        Check digital signature of a file using PowerShell.
+        
+        Args:
+            file_path: Path to file to check
+            
+        Returns:
+            Signature status or None if check fails
+        """
+        try:
+            ps_cmd = f'(Get-AuthenticodeSignature "{file_path}").Status'
+            output = self._safe_execute("powershell", "-Command", ps_cmd, encoding='utf-8')
+            if output:
+                return output.strip()
+        except Exception:
+            pass
+        return None
     
     def _collect_wmi_hardware(self) -> List[AssetData]:
         """Collect hardware using WMI."""
