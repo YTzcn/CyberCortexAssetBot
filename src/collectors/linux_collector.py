@@ -63,14 +63,16 @@ class LinuxCollector(BaseCollector):
                             # Get module information
                             modinfo = self._get_module_info(name)
                             
-                            drivers.append(AssetData(
-                                name=name,
-                                version=modinfo.get('version'),
-                                path=modinfo.get('filename'),
-                                size=size,
-                                description=modinfo.get('description'),
-                                vendor=modinfo.get('author')
-                            ))
+                            # Only add if it's a real kernel module (has filename ending with .ko)
+                            if modinfo.get('filename') and modinfo.get('filename').endswith('.ko'):
+                                drivers.append(AssetData(
+                                    name=name,
+                                    version=modinfo.get('version'),
+                                    path=modinfo.get('filename'),
+                                    size=size,
+                                    description=modinfo.get('description'),
+                                    vendor=modinfo.get('author')
+                                ))
             
             # Get available modules from /lib/modules
             modules_dir = Path("/lib/modules")
@@ -85,12 +87,20 @@ class LinuxCollector(BaseCollector):
                                         module_path = line.split(':')[0]
                                         module_name = Path(module_path).stem
                                         
-                                        # Check if not already collected
+                                        # Check if not already collected and is a kernel module
                                         if not any(d.name == module_name for d in drivers):
-                                            drivers.append(AssetData(
-                                                name=module_name,
-                                                path=f"/lib/modules/{kernel_version.name}/{module_path}"
-                                            ))
+                                            # Get module info for version
+                                            modinfo = self._get_module_info(module_name)
+                                            
+                                            # Only add if it's a real kernel module (has filename ending with .ko)
+                                            if modinfo.get('filename') and modinfo.get('filename').endswith('.ko'):
+                                                drivers.append(AssetData(
+                                                    name=module_name,
+                                                    version=modinfo.get('version'),
+                                                    path=f"/lib/modules/{kernel_version.name}/{module_path}",
+                                                    description=modinfo.get('description'),
+                                                    vendor=modinfo.get('author')
+                                                ))
         
         except Exception as e:
             raise DataCollectionError(f"Failed to collect drivers: {str(e)}")
@@ -245,10 +255,70 @@ class LinuxCollector(BaseCollector):
                     if ':' in line:
                         key, value = line.split(':', 1)
                         info[key.strip().lower()] = value.strip()
+            
+            # If no version found, try alternative methods
+            if not info.get('version'):
+                # Try to get version from module file directly
+                version = self._get_module_version_from_file(module_name)
+                if version:
+                    info['version'] = version
         except Exception:
             pass
         
         return info
+    
+    def _get_module_version_from_file(self, module_name: str) -> Optional[str]:
+        """Get version information from module file using various methods."""
+        try:
+            # Method 1: Try to find module file and get version from strings
+            module_path = self._find_module_file(module_name)
+            if module_path and Path(module_path).exists():
+                # Try strings command
+                strings_output = self._safe_execute("strings", module_path)
+                if strings_output:
+                    import re
+                    # Look for version patterns
+                    version_patterns = [
+                        r'(\d+\.\d+(?:\.\d+)?)',
+                        r'version\s*[=:]\s*(\d+\.\d+(?:\.\d+)?)',
+                        r'ver\s*[=:]\s*(\d+\.\d+(?:\.\d+)?)'
+                    ]
+                    
+                    for pattern in version_patterns:
+                        matches = re.findall(pattern, strings_output)
+                        if matches:
+                            # Return the first valid version found
+                            for match in matches:
+                                if match and '.' in match:
+                                    return match
+            
+            return None
+        except Exception:
+            return None
+    
+    def _find_module_file(self, module_name: str) -> Optional[str]:
+        """Find the module file path for a given module name."""
+        try:
+            # Try to find in /lib/modules
+            modules_dir = Path("/lib/modules")
+            if modules_dir.exists():
+                for kernel_version in modules_dir.iterdir():
+                    if kernel_version.is_dir():
+                        # Look in various subdirectories
+                        search_dirs = [
+                            kernel_version / "kernel",
+                            kernel_version / "extra",
+                            kernel_version / "updates"
+                        ]
+                        
+                        for search_dir in search_dirs:
+                            if search_dir.exists():
+                                for module_file in search_dir.rglob(f"{module_name}.ko"):
+                                    return str(module_file)
+            
+            return None
+        except Exception:
+            return None
     
     def _collect_apt_packages(self) -> List[AssetData]:
         """Collect packages from APT (Debian/Ubuntu)."""
