@@ -325,6 +325,9 @@ class BaseCollector(ABC):
         """
         import subprocess
         
+        # Set default timeout to 5 seconds
+        timeout = kwargs.pop('timeout', 5)
+        
         try:
             result = subprocess.run(
                 [command] + list(args),
@@ -333,10 +336,11 @@ class BaseCollector(ABC):
                 encoding='utf-8',
                 errors='replace',  # Replace invalid characters instead of failing
                 check=True,
+                timeout=timeout,
                 **kwargs
             )
             return result.stdout.strip()
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return None
     
     def get_platform_info(self) -> PlatformInfo:

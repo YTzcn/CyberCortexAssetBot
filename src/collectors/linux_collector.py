@@ -453,10 +453,15 @@ class LinuxCollector(BaseCollector):
         for bin_dir in bin_dirs:
             bin_path = Path(bin_dir)
             if bin_path.exists():
+                count = 0
                 for binary in bin_path.iterdir():
                     if binary.is_file() and binary.stat().st_mode & 0o111:  # Executable
-                        # Get version for binary
-                        version = self._get_binary_version(str(binary))
+                        # Limit to first 100 binaries per directory to avoid timeout
+                        if count >= 100:
+                            break
+                        
+                        # Get version for binary (with timeout)
+                        version = self._get_binary_version_fast(str(binary))
                         
                         applications.append(AssetData(
                             name=binary.name,
@@ -465,6 +470,7 @@ class LinuxCollector(BaseCollector):
                             size=binary.stat().st_size,
                             install_date=datetime.fromtimestamp(binary.stat().st_mtime)
                         ))
+                        count += 1
         
         return applications
     
@@ -1245,6 +1251,23 @@ class LinuxCollector(BaseCollector):
                         version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
                         if version_match:
                             return version_match.group(1)
+            
+        except Exception:
+            pass
+        
+        return None
+    
+    def _get_binary_version_fast(self, binary_path: str) -> Optional[str]:
+        """Get version of a binary executable (fast version with timeout)."""
+        try:
+            # Only try --version flag with 2 second timeout
+            version_output = self._safe_execute(binary_path, "--version", timeout=2)
+            if version_output:
+                import re
+                # Look for version patterns like 1.2.3, v1.2.3, version 1.2.3
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
             
         except Exception:
             pass
