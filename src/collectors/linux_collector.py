@@ -1268,7 +1268,7 @@ class LinuxCollector(BaseCollector):
         try:
             # Method 1: Try --version flag with 2 second timeout
             version_output = self._safe_execute(binary_path, "--version", timeout=2)
-            if version_output:
+            if version_output and not any(x in version_output.lower() for x in ['usage:', 'help:', 'error:', 'command not found']):
                 import re
                 # Look for version patterns like 1.2.3, v1.2.3, version 1.2.3
                 version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
@@ -1277,7 +1277,7 @@ class LinuxCollector(BaseCollector):
             
             # Method 2: Try -v flag with 1 second timeout
             version_output = self._safe_execute(binary_path, "-v", timeout=1)
-            if version_output:
+            if version_output and not any(x in version_output.lower() for x in ['usage:', 'help:', 'error:', 'command not found']):
                 import re
                 version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
                 if version_match:
@@ -1285,7 +1285,7 @@ class LinuxCollector(BaseCollector):
             
             # Method 3: Try -V flag with 1 second timeout
             version_output = self._safe_execute(binary_path, "-V", timeout=1)
-            if version_output:
+            if version_output and not any(x in version_output.lower() for x in ['usage:', 'help:', 'error:', 'command not found']):
                 import re
                 version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
                 if version_match:
@@ -1302,14 +1302,27 @@ class LinuxCollector(BaseCollector):
                         if version_match:
                             return version_match.group(1)
             
-            # Method 5: Try file command to get version info
-            file_output = self._safe_execute("file", binary_path, timeout=2)
-            if file_output:
+            # Method 5: Try objdump to get version info
+            objdump_output = self._safe_execute("objdump", "-p", binary_path, timeout=2)
+            if objdump_output:
                 import re
-                # Look for version in file output
-                version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', file_output, re.IGNORECASE)
-                if version_match:
-                    return version_match.group(1)
+                # Look for version in objdump output
+                for line in objdump_output.split('\n'):
+                    if 'version' in line.lower():
+                        version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 6: Try readelf to get version info
+            readelf_output = self._safe_execute("readelf", "-V", binary_path, timeout=2)
+            if readelf_output:
+                import re
+                # Look for version in readelf output
+                for line in readelf_output.split('\n'):
+                    if 'version' in line.lower():
+                        version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
             
         except Exception:
             pass
