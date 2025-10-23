@@ -331,10 +331,16 @@ class LinuxCollector(BaseCollector):
                     if line.startswith('ii'):  # Installed packages
                         parts = line.split()
                         if len(parts) >= 3:
+                            name = parts[1]
+                            version = parts[2]
+                            
+                            # Get package description
+                            description = self._get_package_description(name)
+                            
                             packages.append(AssetData(
-                                name=parts[1],
-                                version=parts[2],
-                                description=' '.join(parts[4:]) if len(parts) > 4 else None
+                                name=name,
+                                version=version,
+                                description=description or ' '.join(parts[4:]) if len(parts) > 4 else None
                             ))
         except Exception:
             pass
@@ -1304,6 +1310,28 @@ class LinuxCollector(BaseCollector):
                 version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', file_output, re.IGNORECASE)
                 if version_match:
                     return version_match.group(1)
+            
+        except Exception:
+            pass
+        
+        return None
+    
+    def _get_package_description(self, package_name: str) -> Optional[str]:
+        """Get package description from package manager."""
+        try:
+            # Try apt show command
+            apt_output = self._safe_execute("apt", "show", package_name, timeout=3)
+            if apt_output:
+                for line in apt_output.split('\n'):
+                    if line.startswith('Description:'):
+                        return line.replace('Description:', '').strip()
+            
+            # Try dpkg -s command
+            dpkg_output = self._safe_execute("dpkg", "-s", package_name, timeout=3)
+            if dpkg_output:
+                for line in dpkg_output.split('\n'):
+                    if line.startswith('Description:'):
+                        return line.replace('Description:', '').strip()
             
         except Exception:
             pass
