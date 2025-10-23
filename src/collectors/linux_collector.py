@@ -680,16 +680,37 @@ class LinuxCollector(BaseCollector):
                 lines = cpuinfo.split('\n')
                 vendor_id = None
                 model_name = None
+                cpu_version = None
+                cpu_family = None
+                cpu_model = None
+                
                 for line in lines:
                     if line.startswith('vendor_id'):
                         vendor_id = line.split(':')[1].strip()
                     elif line.startswith('model name'):
                         model_name = line.split(':')[1].strip()
+                    elif line.startswith('cpu family'):
+                        cpu_family = line.split(':')[1].strip()
+                    elif line.startswith('model'):
+                        cpu_model = line.split(':')[1].strip()
+                    elif line.startswith('cpu MHz'):
+                        cpu_version = line.split(':')[1].strip() + " MHz"
                         break
                 
                 if model_name:
+                    version_parts = []
+                    if cpu_family:
+                        version_parts.append(f"Family: {cpu_family}")
+                    if cpu_model:
+                        version_parts.append(f"Model: {cpu_model}")
+                    if cpu_version:
+                        version_parts.append(f"Speed: {cpu_version}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"System: {model_name}",
+                        version=version_string,
                         vendor=vendor_id or "Unknown"
                     ))
             
@@ -723,9 +744,26 @@ class LinuxCollector(BaseCollector):
                         cpu_info[key.strip()] = value.strip()
                 
                 if 'Model name' in cpu_info:
+                    # Create version string from available info
+                    version_parts = []
+                    if cpu_info.get('CPU(s)'):
+                        version_parts.append(f"Cores: {cpu_info['CPU(s)']}")
+                    if cpu_info.get('Thread(s) per core'):
+                        version_parts.append(f"Threads per core: {cpu_info['Thread(s) per core']}")
+                    if cpu_info.get('Architecture'):
+                        version_parts.append(f"Architecture: {cpu_info['Architecture']}")
+                    if cpu_info.get('CPU MHz'):
+                        version_parts.append(f"Speed: {cpu_info['CPU MHz']} MHz")
+                    if cpu_info.get('CPU family'):
+                        version_parts.append(f"Family: {cpu_info['CPU family']}")
+                    if cpu_info.get('Model'):
+                        version_parts.append(f"Model: {cpu_info['Model']}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"CPU: {cpu_info['Model name']}",
-                        version=cpu_info.get('CPU(s)', 'Unknown'),
+                        version=version_string,
                         description=f"Cores: {cpu_info.get('CPU(s)', 'Unknown')}, Threads: {cpu_info.get('Thread(s) per core', 'Unknown')}, Architecture: {cpu_info.get('Architecture', 'Unknown')}",
                         vendor=cpu_info.get('Vendor ID', 'Unknown')
                     ))
@@ -737,6 +775,9 @@ class LinuxCollector(BaseCollector):
                 model_name = None
                 vendor_id = None
                 cpu_cores = 0
+                cpu_family = None
+                cpu_model = None
+                cpu_mhz = None
                 
                 for line in lines:
                     if line.startswith('model name'):
@@ -745,10 +786,27 @@ class LinuxCollector(BaseCollector):
                         vendor_id = line.split(':')[1].strip()
                     elif line.startswith('processor'):
                         cpu_cores += 1
+                    elif line.startswith('cpu family'):
+                        cpu_family = line.split(':')[1].strip()
+                    elif line.startswith('model'):
+                        cpu_model = line.split(':')[1].strip()
+                    elif line.startswith('cpu MHz'):
+                        cpu_mhz = line.split(':')[1].strip() + " MHz"
                 
                 if model_name:
+                    version_parts = []
+                    if cpu_family:
+                        version_parts.append(f"Family: {cpu_family}")
+                    if cpu_model:
+                        version_parts.append(f"Model: {cpu_model}")
+                    if cpu_mhz:
+                        version_parts.append(f"Speed: {cpu_mhz}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"CPU: {model_name}",
+                        version=version_string,
                         description=f"Cores: {cpu_cores}",
                         vendor=vendor_id or "Unknown"
                     ))
@@ -767,14 +825,35 @@ class LinuxCollector(BaseCollector):
             meminfo = self._safe_execute("cat", "/proc/meminfo")
             if meminfo:
                 mem_total = None
+                mem_available = None
+                mem_free = None
+                mem_cached = None
+                
                 for line in meminfo.split('\n'):
                     if line.startswith('MemTotal'):
                         mem_total = int(line.split(':')[1].strip().split()[0]) // 1024  # Convert to MB
-                        break
+                    elif line.startswith('MemAvailable'):
+                        mem_available = int(line.split(':')[1].strip().split()[0]) // 1024
+                    elif line.startswith('MemFree'):
+                        mem_free = int(line.split(':')[1].strip().split()[0]) // 1024
+                    elif line.startswith('Cached'):
+                        mem_cached = int(line.split(':')[1].strip().split()[0]) // 1024
                 
                 if mem_total:
+                    # Create version string with memory details
+                    version_parts = []
+                    if mem_available:
+                        version_parts.append(f"Available: {mem_available // 1024}GB")
+                    if mem_free:
+                        version_parts.append(f"Free: {mem_free // 1024}GB")
+                    if mem_cached:
+                        version_parts.append(f"Cached: {mem_cached // 1024}GB")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"RAM: {mem_total // 1024}GB",
+                        version=version_string,
                         size=mem_total * 1024 * 1024,  # Convert to bytes
                         vendor="Unknown"
                     ))
@@ -809,8 +888,24 @@ class LinuxCollector(BaseCollector):
                 if 'blockdevices' in data:
                     for device in data['blockdevices']:
                         if device.get('type') == 'disk':
+                            # Create version string with disk details
+                            version_parts = []
+                            if device.get('model'):
+                                version_parts.append(f"Model: {device['model']}")
+                            if device.get('vendor'):
+                                version_parts.append(f"Vendor: {device['vendor']}")
+                            if device.get('tran'):
+                                version_parts.append(f"Transport: {device['tran']}")
+                            if device.get('rota'):
+                                version_parts.append(f"Rotational: {device['rota']}")
+                            if device.get('serial'):
+                                version_parts.append(f"Serial: {device['serial']}")
+                            
+                            version_string = ", ".join(version_parts) if version_parts else None
+                            
                             hardware.append(AssetData(
                                 name=f"Disk: {device.get('name', 'Unknown')}",
+                                version=version_string,
                                 description=f"Size: {device.get('size', 'Unknown')}, Model: {device.get('model', 'Unknown')}",
                                 vendor=device.get('vendor', 'Unknown'),
                                 size=self._parse_size(device.get('size', '0'))
@@ -840,15 +935,44 @@ class LinuxCollector(BaseCollector):
         hardware = []
         
         try:
-            # Network interfaces from ip command
+            # Network interfaces from ip command with detailed info
             ip_output = self._safe_execute("ip", "link", "show")
             if ip_output:
                 for line in ip_output.split('\n'):
                     if ':' in line and 'state' in line:
                         interface = line.split(':')[1].strip()
                         if not interface.startswith('lo'):  # Skip loopback
+                            # Get additional interface details
+                            version_parts = []
+                            
+                            # Get interface type and state
+                            if 'state' in line:
+                                state_part = line.split('state')[1].strip()
+                                if ' ' in state_part:
+                                    state = state_part.split()[0]
+                                    version_parts.append(f"State: {state}")
+                            
+                            # Get interface type from /sys/class/net
+                            try:
+                                interface_type = self._safe_execute("cat", f"/sys/class/net/{interface}/type")
+                                if interface_type:
+                                    version_parts.append(f"Type: {interface_type}")
+                            except:
+                                pass
+                            
+                            # Get driver information
+                            try:
+                                driver = self._safe_execute("cat", f"/sys/class/net/{interface}/device/driver/module/drivers")
+                                if driver:
+                                    version_parts.append(f"Driver: {driver}")
+                            except:
+                                pass
+                            
+                            version_string = ", ".join(version_parts) if version_parts else None
+                            
                             hardware.append(AssetData(
                                 name=f"Network: {interface}",
+                                version=version_string,
                                 vendor="Unknown"
                             ))
             
@@ -874,24 +998,73 @@ class LinuxCollector(BaseCollector):
         hardware = []
         
         try:
-            # Graphics information from lspci
-            lspci_output = self._safe_execute("lspci")
+            # Graphics information from lspci with detailed info
+            lspci_output = self._safe_execute("lspci", "-v")
             if lspci_output:
+                current_gpu = None
+                gpu_info = {}
+                
                 for line in lspci_output.split('\n'):
                     if 'VGA' in line or 'Display' in line or '3D' in line:
-                        hardware.append(AssetData(
-                            name=f"GPU: {line}",
-                            vendor="Unknown"
-                        ))
+                        if current_gpu:
+                            # Process previous GPU
+                            version_parts = []
+                            if gpu_info.get('subsystem'):
+                                version_parts.append(f"Subsystem: {gpu_info['subsystem']}")
+                            if gpu_info.get('driver'):
+                                version_parts.append(f"Driver: {gpu_info['driver']}")
+                            if gpu_info.get('memory'):
+                                version_parts.append(f"Memory: {gpu_info['memory']}")
+                            
+                            version_string = ", ".join(version_parts) if version_parts else None
+                            
+                            hardware.append(AssetData(
+                                name=f"GPU: {current_gpu}",
+                                version=version_string,
+                                vendor="Unknown"
+                            ))
+                        
+                        # Start new GPU
+                        current_gpu = line
+                        gpu_info = {}
+                    elif current_gpu and line.strip():
+                        if line.startswith('\t'):
+                            # This is a detail line
+                            if 'Subsystem:' in line:
+                                gpu_info['subsystem'] = line.split('Subsystem:')[1].strip()
+                            elif 'Kernel driver in use:' in line:
+                                gpu_info['driver'] = line.split('Kernel driver in use:')[1].strip()
+                            elif 'Memory at' in line:
+                                gpu_info['memory'] = line.split('Memory at')[1].strip().split()[0]
+                
+                # Process last GPU if exists
+                if current_gpu:
+                    version_parts = []
+                    if gpu_info.get('subsystem'):
+                        version_parts.append(f"Subsystem: {gpu_info['subsystem']}")
+                    if gpu_info.get('driver'):
+                        version_parts.append(f"Driver: {gpu_info['driver']}")
+                    if gpu_info.get('memory'):
+                        version_parts.append(f"Memory: {gpu_info['memory']}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
+                    hardware.append(AssetData(
+                        name=f"GPU: {current_gpu}",
+                        version=version_string,
+                        vendor="Unknown"
+                    ))
             
-            # Alternative: /proc/bus/pci/devices
-            pci_output = self._safe_execute("cat", "/proc/bus/pci/devices")
-            if pci_output and not hardware:
-                # This is more complex, just add a basic entry
-                hardware.append(AssetData(
-                    name="GPU: Unknown",
-                    vendor="Unknown"
-                ))
+            # Fallback: simple lspci
+            if not hardware:
+                lspci_simple = self._safe_execute("lspci")
+                if lspci_simple:
+                    for line in lspci_simple.split('\n'):
+                        if 'VGA' in line or 'Display' in line or '3D' in line:
+                            hardware.append(AssetData(
+                                name=f"GPU: {line}",
+                                vendor="Unknown"
+                            ))
                 
         except Exception:
             pass

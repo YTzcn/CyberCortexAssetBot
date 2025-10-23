@@ -1028,9 +1028,28 @@ class WindowsCollector(BaseCollector):
         try:
             # CPU Information
             for cpu in self.wmi_conn.Win32_Processor():
+                # Create detailed version string
+                version_parts = []
+                if cpu.Version:
+                    version_parts.append(f"Version: {cpu.Version}")
+                if cpu.Architecture:
+                    version_parts.append(f"Architecture: {cpu.Architecture}")
+                if cpu.Family:
+                    version_parts.append(f"Family: {cpu.Family}")
+                if cpu.Model:
+                    version_parts.append(f"Model: {cpu.Model}")
+                if cpu.Stepping:
+                    version_parts.append(f"Stepping: {cpu.Stepping}")
+                if cpu.MaxClockSpeed:
+                    version_parts.append(f"Max Speed: {cpu.MaxClockSpeed} MHz")
+                if cpu.CurrentClockSpeed:
+                    version_parts.append(f"Current Speed: {cpu.CurrentClockSpeed} MHz")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"CPU: {cpu.Name}",
-                    version=cpu.Version,
+                    version=version_string,
                     description=f"Manufacturer: {cpu.Manufacturer}, Cores: {cpu.NumberOfCores}, Threads: {cpu.NumberOfLogicalProcessors}",
                     vendor=cpu.Manufacturer,
                     size=cpu.MaxClockSpeed
@@ -1038,9 +1057,26 @@ class WindowsCollector(BaseCollector):
             
             # Memory Information
             for memory in self.wmi_conn.Win32_PhysicalMemory():
+                # Create detailed version string
+                version_parts = []
+                if memory.Version:
+                    version_parts.append(f"Version: {memory.Version}")
+                if memory.Speed:
+                    version_parts.append(f"Speed: {memory.Speed} MHz")
+                if memory.FormFactor:
+                    version_parts.append(f"Form Factor: {memory.FormFactor}")
+                if memory.MemoryType:
+                    version_parts.append(f"Type: {memory.MemoryType}")
+                if memory.PartNumber:
+                    version_parts.append(f"Part Number: {memory.PartNumber}")
+                if memory.SerialNumber:
+                    version_parts.append(f"Serial: {memory.SerialNumber}")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"RAM: {memory.Capacity // (1024**3)}GB",
-                    version=memory.Version,
+                    version=version_string,
                     description=f"Manufacturer: {memory.Manufacturer}, Speed: {memory.Speed}MHz, Form Factor: {memory.FormFactor}",
                     vendor=memory.Manufacturer,
                     size=memory.Capacity
@@ -1048,9 +1084,26 @@ class WindowsCollector(BaseCollector):
             
             # Disk Drives
             for disk in self.wmi_conn.Win32_DiskDrive():
+                # Create detailed version string
+                version_parts = []
+                if disk.FirmwareRevision:
+                    version_parts.append(f"Firmware: {disk.FirmwareRevision}")
+                if disk.InterfaceType:
+                    version_parts.append(f"Interface: {disk.InterfaceType}")
+                if disk.SerialNumber:
+                    version_parts.append(f"Serial: {disk.SerialNumber}")
+                if disk.Partitions:
+                    version_parts.append(f"Partitions: {disk.Partitions}")
+                if disk.BytesPerSector:
+                    version_parts.append(f"Bytes/Sector: {disk.BytesPerSector}")
+                if disk.SectorsPerTrack:
+                    version_parts.append(f"Sectors/Track: {disk.SectorsPerTrack}")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"Disk: {disk.Model}",
-                    version=disk.FirmwareRevision,
+                    version=version_string,
                     description=f"Manufacturer: {disk.Manufacturer}, Interface: {disk.InterfaceType}, Size: {disk.Size // (1024**3)}GB",
                     vendor=disk.Manufacturer,
                     size=disk.Size
@@ -1059,9 +1112,24 @@ class WindowsCollector(BaseCollector):
             # Network Adapters
             for adapter in self.wmi_conn.Win32_NetworkAdapter():
                 if adapter.NetConnectionStatus == 2:  # Connected
+                    # Create detailed version string
+                    version_parts = []
+                    if adapter.DriverVersion:
+                        version_parts.append(f"Driver: {adapter.DriverVersion}")
+                    if adapter.NetConnectionStatus:
+                        version_parts.append(f"Status: {adapter.NetConnectionStatus}")
+                    if adapter.AdapterType:
+                        version_parts.append(f"Type: {adapter.AdapterType}")
+                    if adapter.Speed:
+                        version_parts.append(f"Speed: {adapter.Speed} bps")
+                    if adapter.NetEnabled:
+                        version_parts.append(f"Enabled: {adapter.NetEnabled}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"Network: {adapter.Name}",
-                        version=adapter.DriverVersion,
+                        version=version_string,
                         description=f"Manufacturer: {adapter.Manufacturer}, MAC: {adapter.MACAddress}",
                         vendor=adapter.Manufacturer
                     ))
@@ -1069,9 +1137,26 @@ class WindowsCollector(BaseCollector):
             # Graphics Cards
             for gpu in self.wmi_conn.Win32_VideoController():
                 if gpu.Name and "Microsoft" not in gpu.Name:
+                    # Create detailed version string
+                    version_parts = []
+                    if gpu.DriverVersion:
+                        version_parts.append(f"Driver: {gpu.DriverVersion}")
+                    if gpu.DriverDate:
+                        version_parts.append(f"Driver Date: {gpu.DriverDate}")
+                    if gpu.VideoProcessor:
+                        version_parts.append(f"Processor: {gpu.VideoProcessor}")
+                    if gpu.VideoArchitecture:
+                        version_parts.append(f"Architecture: {gpu.VideoArchitecture}")
+                    if gpu.VideoMemoryType:
+                        version_parts.append(f"Memory Type: {gpu.VideoMemoryType}")
+                    if gpu.CurrentHorizontalResolution:
+                        version_parts.append(f"Resolution: {gpu.CurrentHorizontalResolution}x{gpu.CurrentVerticalResolution}")
+                    
+                    version_string = ", ".join(version_parts) if version_parts else None
+                    
                     hardware.append(AssetData(
                         name=f"GPU: {gpu.Name}",
-                        version=gpu.DriverVersion,
+                        version=version_string,
                         description=f"Manufacturer: {gpu.Manufacturer}, Memory: {gpu.AdapterRAM // (1024**2)}MB",
                         vendor=gpu.Manufacturer,
                         size=gpu.AdapterRAM
@@ -1079,18 +1164,46 @@ class WindowsCollector(BaseCollector):
             
             # Motherboard
             for board in self.wmi_conn.Win32_BaseBoard():
+                # Create detailed version string
+                version_parts = []
+                if board.Version:
+                    version_parts.append(f"Version: {board.Version}")
+                if board.SerialNumber:
+                    version_parts.append(f"Serial: {board.SerialNumber}")
+                if board.Tag:
+                    version_parts.append(f"Tag: {board.Tag}")
+                if board.ConfigOptions:
+                    version_parts.append(f"Config: {board.ConfigOptions}")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"Motherboard: {board.Product}",
-                    version=board.Version,
+                    version=version_string,
                     description=f"Manufacturer: {board.Manufacturer}, Serial: {board.SerialNumber}",
                     vendor=board.Manufacturer
                 ))
             
             # BIOS
             for bios in self.wmi_conn.Win32_BIOS():
+                # Create detailed version string
+                version_parts = []
+                if bios.SMBIOSBIOSVersion:
+                    version_parts.append(f"SMBIOS: {bios.SMBIOSBIOSVersion}")
+                if bios.BIOSVersion:
+                    version_parts.append(f"BIOS: {bios.BIOSVersion}")
+                if bios.ReleaseDate:
+                    version_parts.append(f"Release: {bios.ReleaseDate}")
+                if bios.SerialNumber:
+                    version_parts.append(f"Serial: {bios.SerialNumber}")
+                if bios.Version:
+                    version_parts.append(f"Version: {bios.Version}")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"BIOS: {bios.Name}",
-                    version=bios.SMBIOSBIOSVersion,
+                    version=version_string,
                     description=f"Manufacturer: {bios.Manufacturer}, Release Date: {bios.ReleaseDate}",
                     vendor=bios.Manufacturer
                 ))

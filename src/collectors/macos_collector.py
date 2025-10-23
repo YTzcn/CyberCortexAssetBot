@@ -328,16 +328,24 @@ class MacOSCollector(BaseCollector):
                                 with open(info_plist, 'rb') as f:
                                     plist_data = plistlib.load(f)
                                 
+                                # Try multiple version fields
+                                version = (plist_data.get('CFBundleShortVersionString') or 
+                                         plist_data.get('CFBundleVersion') or 
+                                         plist_data.get('CFBundleGetInfoString'))
+                                
                                 applications.append(AssetData(
                                     name=plist_data.get('CFBundleName', app.stem),
-                                    version=plist_data.get('CFBundleShortVersionString'),
+                                    version=version,
                                     path=str(app),
                                     description=plist_data.get('CFBundleDescription'),
                                     vendor=plist_data.get('CFBundleIdentifier')
                                 ))
                             except Exception:
+                                # Try to get version from app bundle directly
+                                version = self._get_app_version_from_bundle(str(app))
                                 applications.append(AssetData(
                                     name=app.stem,
+                                    version=version or "Unknown",
                                     path=str(app)
                                 ))
         except Exception:
@@ -360,16 +368,24 @@ class MacOSCollector(BaseCollector):
                                 with open(info_plist, 'rb') as f:
                                     plist_data = plistlib.load(f)
                                 
+                                # Try multiple version fields
+                                version = (plist_data.get('CFBundleShortVersionString') or 
+                                         plist_data.get('CFBundleVersion') or 
+                                         plist_data.get('CFBundleGetInfoString'))
+                                
                                 applications.append(AssetData(
                                     name=plist_data.get('CFBundleName', app.stem),
-                                    version=plist_data.get('CFBundleShortVersionString'),
+                                    version=version,
                                     path=str(app),
                                     description=plist_data.get('CFBundleDescription'),
                                     vendor="Apple"
                                 ))
                             except Exception:
+                                # Try to get version from app bundle directly
+                                version = self._get_app_version_from_bundle(str(app))
                                 applications.append(AssetData(
                                     name=app.stem,
+                                    version=version or "Unknown",
                                     path=str(app),
                                     vendor="Apple"
                                 ))
@@ -412,27 +428,26 @@ class MacOSCollector(BaseCollector):
             if brew_output:
                 for line in brew_output.split('\n'):
                     if line.strip():
-                        # Get more info about each package
-                        info_output = self._safe_execute("brew", "info", line.strip())
+                        name = line.strip()
+                        # Use the same version detection method as packages
+                        version = self._get_homebrew_package_version(name)
+                        
+                        # Get description
+                        info_output = self._safe_execute("brew", "info", name)
+                        description = None
                         if info_output:
                             lines = info_output.split('\n')
-                            name = line.strip()
-                            version = None
-                            description = None
-                            
                             for info_line in lines:
-                                if info_line.startswith(f"{name}:"):
-                                    version = info_line.split(':')[1].strip().split()[0]
-                                elif info_line.strip() and not info_line.startswith('==>'):
+                                if info_line.strip() and not info_line.startswith('==>') and not info_line.startswith(f"{name}:"):
                                     description = info_line.strip()
                                     break
-                            
-                            applications.append(AssetData(
-                                name=name,
-                                version=version,
-                                description=description,
-                                vendor="Homebrew"
-                            ))
+                        
+                        applications.append(AssetData(
+                            name=name,
+                            version=version,
+                            description=description,
+                            vendor="Homebrew"
+                        ))
         except Exception:
             pass
         
@@ -474,15 +489,24 @@ class MacOSCollector(BaseCollector):
                         with open(plist_file, 'rb') as f:
                             plist_data = plistlib.load(f)
                         
+                        # Try to get version information
+                        version = (plist_data.get('CFBundleShortVersionString') or 
+                                 plist_data.get('CFBundleVersion') or 
+                                 plist_data.get('Version'))
+                        
                         services.append(AssetData(
                             name=plist_file.stem,
+                            version=version,
                             path=str(plist_file),
                             description=plist_data.get('Label'),
                             vendor="User LaunchAgent"
                         ))
                     except Exception:
+                        # Try to get version from plist file directly
+                        version = self._get_plist_version(str(plist_file))
                         services.append(AssetData(
                             name=plist_file.stem,
+                            version=version,
                             path=str(plist_file),
                             vendor="User LaunchAgent"
                         ))
@@ -495,15 +519,24 @@ class MacOSCollector(BaseCollector):
                         with open(plist_file, 'rb') as f:
                             plist_data = plistlib.load(f)
                         
+                        # Try to get version information
+                        version = (plist_data.get('CFBundleShortVersionString') or 
+                                 plist_data.get('CFBundleVersion') or 
+                                 plist_data.get('Version'))
+                        
                         services.append(AssetData(
                             name=plist_file.stem,
+                            version=version,
                             path=str(plist_file),
                             description=plist_data.get('Label'),
                             vendor="System LaunchDaemon"
                         ))
                     except Exception:
+                        # Try to get version from plist file directly
+                        version = self._get_plist_version(str(plist_file))
                         services.append(AssetData(
                             name=plist_file.stem,
+                            version=version,
                             path=str(plist_file),
                             vendor="System LaunchDaemon"
                         ))
@@ -520,8 +553,12 @@ class MacOSCollector(BaseCollector):
             for proc in psutil.process_iter(['pid', 'name', 'exe', 'create_time']):
                 try:
                     proc_info = proc.info
+                    # Try to get version information from executable
+                    version = self._get_process_version(proc_info.get('exe', ''))
+                    
                     services.append(AssetData(
                         name=proc_info['name'],
+                        version=version,
                         path=proc_info.get('exe', ''),
                         install_date=datetime.fromtimestamp(proc_info['create_time'])
                     ))
@@ -737,10 +774,13 @@ class MacOSCollector(BaseCollector):
                                 vendor="Homebrew"
                             ))
                         else:
-                            # Fallback for packages without version info
+                            # Try to get version info individually
+                            name = parts[0]
+                            version = self._get_homebrew_package_version(name)
+                            
                             packages.append(AssetData(
-                                name=parts[0],
-                                version=None,
+                                name=name,
+                                version=version,
                                 vendor="Homebrew"
                             ))
         except Exception:
@@ -891,8 +931,22 @@ class MacOSCollector(BaseCollector):
             serial = self._safe_execute("system_profiler", "SPHardwareDataType", "-json")
             
             if model:
+                # Get more detailed model information
+                model_version = self._safe_execute("system_profiler", "SPHardwareDataType", "-json")
+                version_info = None
+                if model_version:
+                    try:
+                        import json
+                        data = json.loads(model_version)
+                        if 'SPHardwareDataType' in data and len(data['SPHardwareDataType']) > 0:
+                            info = data['SPHardwareDataType'][0]
+                            version_info = info.get('os_version', 'Unknown')
+                    except:
+                        pass
+                
                 hardware.append(AssetData(
                     name=f"Mac Model: {model}",
+                    version=version_info,
                     vendor="Apple"
                 ))
             
@@ -926,9 +980,35 @@ class MacOSCollector(BaseCollector):
             cores = self._safe_execute("sysctl", "-n", "hw.ncpu")
             cores_per_package = self._safe_execute("sysctl", "-n", "hw.packages")
             
+            # Get CPU version information (Apple Silicon specific)
+            cpu_type = self._safe_execute("sysctl", "-n", "hw.cputype")
+            cpu_subtype = self._safe_execute("sysctl", "-n", "hw.cpusubtype")
+            cpu_arm64 = self._safe_execute("sysctl", "-n", "hw.optional.arm64")
+            cpu_64bit = self._safe_execute("sysctl", "-n", "hw.cpu64bit_capable")
+            logical_cpu = self._safe_execute("sysctl", "-n", "hw.logicalcpu")
+            physical_cpu = self._safe_execute("sysctl", "-n", "hw.physicalcpu")
+            
             if brand:
+                # Create version string from available info
+                version_parts = []
+                if cpu_type:
+                    version_parts.append(f"Type: {cpu_type}")
+                if cpu_subtype:
+                    version_parts.append(f"Subtype: {cpu_subtype}")
+                if cpu_arm64:
+                    version_parts.append(f"ARM64: {cpu_arm64}")
+                if cpu_64bit:
+                    version_parts.append(f"64-bit: {cpu_64bit}")
+                if logical_cpu:
+                    version_parts.append(f"Logical CPUs: {logical_cpu}")
+                if physical_cpu:
+                    version_parts.append(f"Physical CPUs: {physical_cpu}")
+                
+                version_string = ", ".join(version_parts) if version_parts else None
+                
                 hardware.append(AssetData(
                     name=f"CPU: {brand}",
+                    version=version_string,
                     description=f"Cores: {cores}, Packages: {cores_per_package}",
                     vendor="Intel" if "Intel" in brand else "Apple" if "Apple" in brand else "Unknown"
                 ))
@@ -947,8 +1027,35 @@ class MacOSCollector(BaseCollector):
             total_memory = self._safe_execute("sysctl", "-n", "hw.memsize")
             if total_memory:
                 memory_gb = int(total_memory) // (1024**3)
+                
+                # Get memory type and speed information
+                memory_info = self._safe_execute("system_profiler", "SPMemoryDataType", "-json")
+                memory_version = None
+                if memory_info:
+                    try:
+                        import json
+                        data = json.loads(memory_info)
+                        if 'SPMemoryDataType' in data and len(data['SPMemoryDataType']) > 0:
+                            mem_data = data['SPMemoryDataType'][0]
+                            if 'SPMemoryDataType' in mem_data:
+                                memory_modules = mem_data['SPMemoryDataType']
+                                if memory_modules:
+                                    # Get info from first memory module
+                                    first_module = memory_modules[0]
+                                    version_parts = []
+                                    if first_module.get('dimm_type'):
+                                        version_parts.append(f"Type: {first_module['dimm_type']}")
+                                    if first_module.get('dimm_speed'):
+                                        version_parts.append(f"Speed: {first_module['dimm_speed']}")
+                                    if first_module.get('dimm_size'):
+                                        version_parts.append(f"Module Size: {first_module['dimm_size']}")
+                                    memory_version = ", ".join(version_parts) if version_parts else None
+                    except:
+                        pass
+                
                 hardware.append(AssetData(
                     name=f"RAM: {memory_gb}GB",
+                    version=memory_version,
                     size=int(total_memory),
                     vendor="Apple"
                 ))
@@ -971,8 +1078,20 @@ class MacOSCollector(BaseCollector):
                 if 'SPStorageDataType' in data:
                     for disk in data['SPStorageDataType']:
                         if 'mount_point' in disk:
+                            # Get disk version information
+                            version_parts = []
+                            if disk.get('spserial_ata', {}).get('_name'):
+                                version_parts.append(f"Interface: {disk['spserial_ata']['_name']}")
+                            if disk.get('spserial_ata', {}).get('_name'):
+                                version_parts.append(f"Protocol: {disk['spserial_ata'].get('spsata_protocol', 'Unknown')}")
+                            if disk.get('spserial_ata', {}).get('spsata_physical_interconnect'):
+                                version_parts.append(f"Physical: {disk['spserial_ata']['spsata_physical_interconnect']}")
+                            
+                            version_string = ", ".join(version_parts) if version_parts else None
+                            
                             hardware.append(AssetData(
                                 name=f"Disk: {disk.get('_name', 'Unknown')}",
+                                version=version_string,
                                 description=f"Mount: {disk.get('mount_point', 'Unknown')}, Size: {disk.get('size_in_bytes', 0) // (1024**3)}GB",
                                 vendor=disk.get('spserial_ata', {}).get('_name', 'Unknown'),
                                 size=disk.get('size_in_bytes', 0)
@@ -988,15 +1107,41 @@ class MacOSCollector(BaseCollector):
         hardware = []
         
         try:
-            # Network interfaces
-            interfaces = self._safe_execute("ifconfig", "-l")
-            if interfaces:
-                for interface in interfaces.split():
-                    if interface != "lo0":  # Skip loopback
-                        hardware.append(AssetData(
-                            name=f"Network: {interface}",
-                            vendor="Apple"
-                        ))
+            # Network interfaces with detailed information
+            network_info = self._safe_execute("system_profiler", "SPNetworkDataType", "-json")
+            if network_info:
+                import json
+                data = json.loads(network_info)
+                if 'SPNetworkDataType' in data:
+                    for interface in data['SPNetworkDataType']:
+                        interface_name = interface.get('_name', 'Unknown')
+                        if interface_name != "lo0":  # Skip loopback
+                            # Get interface version information
+                            version_parts = []
+                            if interface.get('spnetwork_hardware'):
+                                version_parts.append(f"Hardware: {interface['spnetwork_hardware']}")
+                            if interface.get('spnetwork_type'):
+                                version_parts.append(f"Type: {interface['spnetwork_type']}")
+                            if interface.get('spnetwork_interface'):
+                                version_parts.append(f"Interface: {interface['spnetwork_interface']}")
+                            
+                            version_string = ", ".join(version_parts) if version_parts else None
+                            
+                            hardware.append(AssetData(
+                                name=f"Network: {interface_name}",
+                                version=version_string,
+                                vendor="Apple"
+                            ))
+            else:
+                # Fallback to basic interface listing
+                interfaces = self._safe_execute("ifconfig", "-l")
+                if interfaces:
+                    for interface in interfaces.split():
+                        if interface != "lo0":  # Skip loopback
+                            hardware.append(AssetData(
+                                name=f"Network: {interface}",
+                                vendor="Apple"
+                            ))
                         
         except Exception:
             pass
@@ -1015,8 +1160,22 @@ class MacOSCollector(BaseCollector):
                 data = json.loads(gpu_info)
                 if 'SPDisplaysDataType' in data:
                     for display in data['SPDisplaysDataType']:
+                        # Get GPU version information
+                        version_parts = []
+                        if display.get('sppci_model'):
+                            version_parts.append(f"PCI Model: {display['sppci_model']}")
+                        if display.get('spdisplays_vram'):
+                            version_parts.append(f"VRAM: {display['spdisplays_vram']}")
+                        if display.get('spdisplays_resolution'):
+                            version_parts.append(f"Resolution: {display['spdisplays_resolution']}")
+                        if display.get('spdisplays_main_display'):
+                            version_parts.append(f"Main Display: {display['spdisplays_main_display']}")
+                        
+                        version_string = ", ".join(version_parts) if version_parts else None
+                        
                         hardware.append(AssetData(
                             name=f"GPU: {display.get('_name', 'Unknown')}",
+                            version=version_string,
                             description=f"Resolution: {display.get('spdisplays_resolution', 'Unknown')}, VRAM: {display.get('spdisplays_vram', 'Unknown')}",
                             vendor=display.get('sppci_model', 'Unknown')
                         ))
@@ -1025,3 +1184,182 @@ class MacOSCollector(BaseCollector):
             pass
         
         return hardware
+    
+    def _get_app_version_from_bundle(self, app_path: str) -> Optional[str]:
+        """Get version information from app bundle using various methods."""
+        try:
+            # Method 1: Try mdls command
+            mdls_output = self._safe_execute("mdls", "-name", "kMDItemVersion", app_path)
+            if mdls_output and mdls_output != "(null)":
+                return mdls_output.strip('"')
+            
+            # Method 2: Try plutil command
+            info_plist = Path(app_path) / "Contents" / "Info.plist"
+            if info_plist.exists():
+                plutil_output = self._safe_execute("plutil", "-p", str(info_plist))
+                if plutil_output:
+                    for line in plutil_output.split('\n'):
+                        if 'CFBundleShortVersionString' in line or 'CFBundleVersion' in line:
+                            # Extract version from plutil output
+                            if '=>' in line:
+                                version = line.split('=>')[1].strip().strip('"')
+                                if version and version != 'null':
+                                    return version
+            
+            # Method 3: Try defaults command
+            bundle_id = self._safe_execute("defaults", "read", app_path + "/Contents/Info", "CFBundleIdentifier")
+            if bundle_id:
+                version = self._safe_execute("defaults", "read", app_path + "/Contents/Info", "CFBundleShortVersionString")
+                if version:
+                    return version.strip('"')
+            
+            return None
+        except Exception:
+            return None
+    
+    def _get_plist_version(self, plist_path: str) -> Optional[str]:
+        """Get version information from plist file using various methods."""
+        try:
+            # Method 1: Try plutil command
+            plutil_output = self._safe_execute("plutil", "-p", plist_path)
+            if plutil_output:
+                for line in plutil_output.split('\n'):
+                    if 'CFBundleShortVersionString' in line or 'CFBundleVersion' in line or 'Version' in line:
+                        if '=>' in line:
+                            version = line.split('=>')[1].strip().strip('"')
+                            if version and version != 'null':
+                                return version
+            
+            # Method 2: Try defaults command
+            version = self._safe_execute("defaults", "read", plist_path, "CFBundleShortVersionString")
+            if version:
+                return version.strip('"')
+            
+            version = self._safe_execute("defaults", "read", plist_path, "CFBundleVersion")
+            if version:
+                return version.strip('"')
+            
+            version = self._safe_execute("defaults", "read", plist_path, "Version")
+            if version:
+                return version.strip('"')
+            
+            # Method 3: Try to get version from executable path in plist
+            if plutil_output:
+                for line in plutil_output.split('\n'):
+                    if 'ProgramArguments' in line or 'Program' in line:
+                        # Find the executable path
+                        next_lines = plutil_output.split('\n')[plutil_output.split('\n').index(line):]
+                        for next_line in next_lines:
+                            if '=>' in next_line and ('/' in next_line or 'Program' in next_line):
+                                exe_path = next_line.split('=>')[1].strip().strip('"')
+                                if exe_path and Path(exe_path).exists():
+                                    return self._get_process_version(exe_path)
+            
+            return None
+        except Exception:
+            return None
+    
+    def _get_homebrew_package_version(self, package_name: str) -> Optional[str]:
+        """Get version information for a specific Homebrew package."""
+        try:
+            # Method 1: Try brew info --json
+            version_info = self._safe_execute("brew", "info", package_name, "--json")
+            if version_info:
+                try:
+                    import json
+                    info = json.loads(version_info)
+                    if info and len(info) > 0:
+                        installed = info[0].get('installed', [])
+                        if installed and len(installed) > 0:
+                            return installed[0].get('version')
+                except:
+                    pass
+            
+            # Method 2: Try brew list --versions
+            versions_output = self._safe_execute("brew", "list", "--versions", package_name)
+            if versions_output:
+                parts = versions_output.split()
+                if len(parts) >= 2:
+                    return parts[1]
+            
+            # Method 3: Try brew info (text output)
+            info_output = self._safe_execute("brew", "info", package_name)
+            if info_output:
+                for line in info_output.split('\n'):
+                    if line.startswith(f"{package_name}:"):
+                        version = line.split(':')[1].strip().split()[0]
+                        if version and version != 'Not':
+                            return version
+            
+            return None
+        except Exception:
+            return None
+    
+    def _get_process_version(self, exe_path: str) -> Optional[str]:
+        """Get version information from executable path."""
+        try:
+            if not exe_path or not Path(exe_path).exists():
+                return None
+            
+            # Method 1: Try mdls command
+            mdls_output = self._safe_execute("mdls", "-name", "kMDItemVersion", exe_path)
+            if mdls_output and "(null)" not in mdls_output and mdls_output.strip() != "(null)":
+                return mdls_output.strip('"')
+            
+            # Method 2: Try otool command for Mach-O binaries
+            otool_output = self._safe_execute("otool", "-l", exe_path)
+            if otool_output:
+                for line in otool_output.split('\n'):
+                    if 'version' in line.lower() and any(char.isdigit() for char in line):
+                        # Extract version from otool output
+                        import re
+                        version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?)', line)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 3: Try strings command
+            strings_output = self._safe_execute("strings", exe_path)
+            if strings_output:
+                for line in strings_output.split('\n'):
+                    if 'version' in line.lower() and any(char.isdigit() for char in line):
+                        # Extract version from strings output
+                        import re
+                        version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', line)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 4: Try to run executable with --version flag
+            version_output = self._safe_execute(exe_path, "--version")
+            if version_output:
+                import re
+                version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', version_output)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 5: Try to run executable with -v flag
+            version_output = self._safe_execute(exe_path, "-v")
+            if version_output:
+                import re
+                version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', version_output)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 6: Try to run executable with -V flag
+            version_output = self._safe_execute(exe_path, "-V")
+            if version_output:
+                import re
+                version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', version_output)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 7: Try to run executable with version flag
+            version_output = self._safe_execute(exe_path, "version")
+            if version_output:
+                import re
+                version_match = re.search(r'(\d+\.\d+(?:\.\d+)?)', version_output)
+                if version_match:
+                    return version_match.group(1)
+            
+            return None
+        except Exception:
+            return None
