@@ -455,8 +455,12 @@ class LinuxCollector(BaseCollector):
             if bin_path.exists():
                 for binary in bin_path.iterdir():
                     if binary.is_file() and binary.stat().st_mode & 0o111:  # Executable
+                        # Get version for binary
+                        version = self._get_binary_version(str(binary))
+                        
                         applications.append(AssetData(
                             name=binary.name,
+                            version=version,
                             path=str(binary),
                             size=binary.stat().st_size,
                             install_date=datetime.fromtimestamp(binary.stat().st_mtime)
@@ -1194,3 +1198,55 @@ class LinuxCollector(BaseCollector):
             return int(size_str)
         except ValueError:
             return 0
+    
+    def _get_binary_version(self, binary_path: str) -> Optional[str]:
+        """Get version of a binary executable."""
+        try:
+            # Method 1: Try --version flag
+            version_output = self._safe_execute(binary_path, "--version")
+            if version_output:
+                import re
+                # Look for version patterns like 1.2.3, v1.2.3, version 1.2.3
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 2: Try -v flag
+            version_output = self._safe_execute(binary_path, "-v")
+            if version_output:
+                import re
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 3: Try -V flag
+            version_output = self._safe_execute(binary_path, "-V")
+            if version_output:
+                import re
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 4: Try version flag
+            version_output = self._safe_execute(binary_path, "version")
+            if version_output:
+                import re
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 5: Try strings command
+            strings_output = self._safe_execute("strings", binary_path)
+            if strings_output:
+                import re
+                # Look for version patterns in strings output
+                for line in strings_output.split('\n'):
+                    if 'version' in line.lower():
+                        version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
+            
+        except Exception:
+            pass
+        
+        return None
