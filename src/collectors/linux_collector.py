@@ -337,10 +337,14 @@ class LinuxCollector(BaseCollector):
                             # Get package description
                             description = self._get_package_description(name)
                             
+                            # Get package vendor
+                            vendor = self._get_package_vendor(name)
+                            
                             packages.append(AssetData(
                                 name=name,
                                 version=version,
-                                description=description or ' '.join(parts[4:]) if len(parts) > 4 else None
+                                description=description or ' '.join(parts[4:]) if len(parts) > 4 else None,
+                                vendor=vendor
                             ))
         except Exception:
             pass
@@ -1345,6 +1349,28 @@ class LinuxCollector(BaseCollector):
                 for line in dpkg_output.split('\n'):
                     if line.startswith('Description:'):
                         return line.replace('Description:', '').strip()
+            
+        except Exception:
+            pass
+        
+        return None
+    
+    def _get_package_vendor(self, package_name: str) -> Optional[str]:
+        """Get package vendor from package manager."""
+        try:
+            # Try apt show command
+            apt_output = self._safe_execute("apt", "show", package_name, timeout=3)
+            if apt_output:
+                for line in apt_output.split('\n'):
+                    if line.startswith('Maintainer:'):
+                        return line.replace('Maintainer:', '').strip()
+            
+            # Try dpkg -s command
+            dpkg_output = self._safe_execute("dpkg", "-s", package_name, timeout=3)
+            if dpkg_output:
+                for line in dpkg_output.split('\n'):
+                    if line.startswith('Maintainer:'):
+                        return line.replace('Maintainer:', '').strip()
             
         except Exception:
             pass
