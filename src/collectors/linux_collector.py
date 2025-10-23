@@ -1260,12 +1260,48 @@ class LinuxCollector(BaseCollector):
     def _get_binary_version_fast(self, binary_path: str) -> Optional[str]:
         """Get version of a binary executable (fast version with timeout)."""
         try:
-            # Only try --version flag with 2 second timeout
+            # Method 1: Try --version flag with 2 second timeout
             version_output = self._safe_execute(binary_path, "--version", timeout=2)
             if version_output:
                 import re
                 # Look for version patterns like 1.2.3, v1.2.3, version 1.2.3
                 version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 2: Try -v flag with 1 second timeout
+            version_output = self._safe_execute(binary_path, "-v", timeout=1)
+            if version_output:
+                import re
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 3: Try -V flag with 1 second timeout
+            version_output = self._safe_execute(binary_path, "-V", timeout=1)
+            if version_output:
+                import re
+                version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', version_output, re.IGNORECASE)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Method 4: Try strings command with 3 second timeout
+            strings_output = self._safe_execute("strings", binary_path, timeout=3)
+            if strings_output:
+                import re
+                # Look for version patterns in strings output
+                for line in strings_output.split('\n'):
+                    if 'version' in line.lower() and any(char.isdigit() for char in line):
+                        version_match = re.search(r'(?:version\s+)?v?(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 5: Try file command to get version info
+            file_output = self._safe_execute("file", binary_path, timeout=2)
+            if file_output:
+                import re
+                # Look for version in file output
+                version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', file_output, re.IGNORECASE)
                 if version_match:
                     return version_match.group(1)
             
