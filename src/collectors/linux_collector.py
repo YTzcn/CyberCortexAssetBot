@@ -466,20 +466,22 @@ class LinuxCollector(BaseCollector):
                 count = 0
                 for binary in bin_path.iterdir():
                     if binary.is_file() and binary.stat().st_mode & 0o111:  # Executable
-                        # Limit to first 100 binaries per directory to avoid timeout
-                        if count >= 100:
+                        # Limit to first 50 binaries per directory to avoid timeout
+                        if count >= 50:
                             break
                         
                         # Get version for binary (with timeout)
                         version = self._get_binary_version_fast(str(binary))
                         
-                        applications.append(AssetData(
-                            name=binary.name,
-                            version=version,
-                            path=str(binary),
-                            size=binary.stat().st_size,
-                            install_date=datetime.fromtimestamp(binary.stat().st_mtime)
-                        ))
+                        # Only add if we found a real version
+                        if version:
+                            applications.append(AssetData(
+                                name=binary.name,
+                                version=version,
+                                path=str(binary),
+                                size=binary.stat().st_size,
+                                install_date=datetime.fromtimestamp(binary.stat().st_mtime)
+                            ))
                         count += 1
         
         return applications
@@ -1323,6 +1325,28 @@ class LinuxCollector(BaseCollector):
                 import re
                 # Look for version in readelf output
                 for line in readelf_output.split('\n'):
+                    if 'version' in line.lower():
+                        version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 7: Try ldd to get version info
+            ldd_output = self._safe_execute("ldd", binary_path, timeout=2)
+            if ldd_output:
+                import re
+                # Look for version in ldd output
+                for line in ldd_output.split('\n'):
+                    if 'version' in line.lower():
+                        version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
+                        if version_match:
+                            return version_match.group(1)
+            
+            # Method 8: Try nm to get version info
+            nm_output = self._safe_execute("nm", "-D", binary_path, timeout=2)
+            if nm_output:
+                import re
+                # Look for version in nm output
+                for line in nm_output.split('\n'):
                     if 'version' in line.lower():
                         version_match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?(?:\.\d+)?)', line, re.IGNORECASE)
                         if version_match:
