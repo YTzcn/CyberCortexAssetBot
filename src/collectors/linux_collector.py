@@ -262,6 +262,26 @@ class LinuxCollector(BaseCollector):
                 version = self._get_module_version_from_file(module_name)
                 if version:
                     info['version'] = version
+            
+            # If still no version, try to extract from srcversion
+            if not info.get('version') and info.get('srcversion'):
+                # Use first 8 characters of srcversion as version
+                info['version'] = info.get('srcversion')[:8]
+            
+            # If still no version, try to get from vermagic
+            if not info.get('version') and info.get('vermagic'):
+                import re
+                # Extract kernel version from vermagic
+                version_match = re.search(r'(\d+\.\d+\.\d+)', info.get('vermagic', ''))
+                if version_match:
+                    info['version'] = version_match.group(1)
+            
+            # If still no version, try to get from depends
+            if not info.get('version') and info.get('depends'):
+                # Use kernel version as fallback
+                kernel_version = self._get_current_kernel_version()
+                if kernel_version:
+                    info['version'] = kernel_version
         except Exception:
             pass
         
@@ -1396,6 +1416,31 @@ class LinuxCollector(BaseCollector):
                     if line.startswith('Maintainer:'):
                         return line.replace('Maintainer:', '').strip()
             
+        except Exception:
+            pass
+        
+        return None
+    
+    def _get_current_kernel_version(self) -> Optional[str]:
+        """Get current kernel version."""
+        try:
+            # Try uname -r
+            uname_output = self._safe_execute("uname", "-r", timeout=2)
+            if uname_output:
+                import re
+                # Extract version like 5.15.0
+                version_match = re.search(r'(\d+\.\d+\.\d+)', uname_output)
+                if version_match:
+                    return version_match.group(1)
+            
+            # Try /proc/version
+            with open("/proc/version", "r") as f:
+                version_line = f.read().strip()
+                import re
+                version_match = re.search(r'Linux version (\d+\.\d+\.\d+)', version_line)
+                if version_match:
+                    return version_match.group(1)
+                    
         except Exception:
             pass
         
