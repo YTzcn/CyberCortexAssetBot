@@ -282,6 +282,20 @@ class LinuxCollector(BaseCollector):
                 kernel_version = self._get_current_kernel_version()
                 if kernel_version:
                     info['version'] = kernel_version
+            
+            # If still no version, try to extract from filename path
+            if not info.get('version') and info.get('filename'):
+                import re
+                # Extract version from path like /lib/modules/5.15.0-160-generic/...
+                version_match = re.search(r'/lib/modules/(\d+\.\d+\.\d+)', info.get('filename', ''))
+                if version_match:
+                    info['version'] = version_match.group(1)
+            
+            # If still no version, use kernel version for all kernel modules
+            if not info.get('version') and info.get('filename') and '.ko' in info.get('filename', ''):
+                kernel_version = self._get_current_kernel_version()
+                if kernel_version:
+                    info['version'] = kernel_version
         except Exception:
             pass
         
